@@ -31,7 +31,7 @@ function stochastic_dual_dynamic_programming_algorithm(
         param::NamedTuple = param
 )::Dict
     ## d: x dim
-    initial = now(); i = 1; LB = - Inf; UB = Inf; 
+    initial = now(); i = 1; LB = - Inf; ub_type = :mean; UB = Inf; 
     iter_time::Float64 = 0; total_Time::Float64 = 0; t0 = 0.0; LMiter::Int64 = 0; LM_iter::Int64 = 0; gap::Float64 = 100.0; gapString = "100%"; branchDecision = false;
 
     col_names = [:Iter, :LB, :OPT, :UB, :gap, :time, :LM_iter, :Time, :Branch];                                 # needs to be a vector Symbols
@@ -103,8 +103,12 @@ function stochastic_dual_dynamic_programming_algorithm(
         ####################################################### Record Info ###########################################################
         LB = maximum([stateInfoCollection[i, 1, 1].StateValue, LB]);
         μ̄ = mean(values(u));
-        σ̂² = Statistics.var(values(u));
-        UB = μ̄ + 1.96 * sqrt(σ̂²/param.numScenarios); # minimum([μ̄ + 1.96 * sqrt(σ̂²/numScenarios), UB]);
+        if ub_type == :mean
+            UB = μ̄;
+        elseif ub_type == :meanvariance
+            σ̂² = Statistics.var(values(u));
+            UB = μ̄ + 1.96 * sqrt(σ̂²/param.numScenarios); # minimum([μ̄ + 1.96 * sqrt(σ̂²/numScenarios), UB]);
+        end
         gap = round((UB-LB)/UB * 100 ,digits = 2); 
         gapString = string(gap,"%"); 
         push!(solHistory, [i, LB, param.OPT, UB, gapString, iter_time, LM_iter, total_Time, branchDecision]); 

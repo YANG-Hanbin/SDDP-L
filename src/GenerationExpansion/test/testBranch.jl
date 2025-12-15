@@ -3,11 +3,12 @@ include(joinpath(@__DIR__, "loadMod.jl"))
 
 if abspath(PROGRAM_FILE) == @__FILE__
     algorithms = [:SDDPL]
-    cutTypes = [:LC, :SMC, :PLC, :LNC]
+    cutTypes = [:LC, :SMC]
+    # cutTypes = [:PLC, :LNC]
     T_list = [10, 15]
     num_list = [5, 10]
 
-    for cutSparsity in [true, false]
+    for partitionRule in [:Bisection]
         results = run_generation_expansion_experiments(
             algorithms                  = algorithms,
             cutTypes                    = cutTypes,
@@ -21,8 +22,8 @@ if abspath(PROGRAM_FILE) == @__FILE__
             solverTime                  = 20.0,
             ε                           = 1e-4,
             discreteZ                   = true,
-            cutSparsity                 = cutSparsity,
-            partitionRule               = :Incumbent,
+            cutSparsity                 = true,
+            partitionRule               = partitionRule,
             branchingStart              = 3,
             M                           = 1,
             verbose                     = false,

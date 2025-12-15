@@ -16,6 +16,7 @@ function stochastic_dual_dynamic_programming_algorithm(
     # iteration counter and bounds
     i  = 1
     LB = -Inf
+    ub_type = :mean
     UB = Inf
 
     solCollection = Dict()
@@ -77,8 +78,12 @@ function stochastic_dual_dynamic_programming_algorithm(
         LB = solCollection[1, 1].StateValue
 
         μ̄  = mean(u)
-        σ̂² = Statistics.var(u)
-        UB  = μ̄ + 1.96 * sqrt(σ̂² / param.sample_size_SDDP)
+        if  ub_type == :mean
+            UB  = μ̄
+        elseif ub_type == :meanvariance
+            σ̂² = Statistics.var(u)
+            UB  = μ̄ + 1.96 * sqrt(σ̂² / param.sample_size_SDDP)
+        end
         gap = round((UB - LB) / UB * 100, digits = 2)
         gapString = string(gap, "%")
 
@@ -152,7 +157,11 @@ function stochastic_dual_dynamic_programming_algorithm(
                         # current interval [lb, ub] and split point med
                         lb  = forwardInfoList[t].IntVarLeaf[:St][g][keys_with_value_1][:lb]
                         ub  = forwardInfoList[t].IntVarLeaf[:St][g][keys_with_value_1][:ub]
-                        med = round(solCollection[t, ω].IntVar[g], digits = 2)
+                        if param.partitionRule == :Bisection
+                            med = floor(Int, (lb + ub) / 2)
+                        elseif param.partitionRule == :Incumbent
+                            med = round(solCollection[t, ω].IntVar[g], digits = 2)
+                        end
 
                         # create two new leaf nodes and update info
                         left  = length(forwardInfoList[t].model[:region_indicator][g]) + 1

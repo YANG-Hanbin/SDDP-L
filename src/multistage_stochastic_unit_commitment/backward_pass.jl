@@ -311,3 +311,31 @@ function backwardPass(
                                                     
     return ((λ₀, λ₁, πₙ₀), LMiter)  
 end
+
+
+# ModelModification!( 
+#     ModelList[t].model, 
+#     scenarioTree.tree[t].nodes[n],
+#     paramDemand,
+#     stateInfoCollection[i, t-1, ω];
+#     indexSets = indexSets
+# );
+# optimize!(ModelList[t].model);
+# objective_value(ModelList[t].model)
+# stateInfo = stateInfoCollection[i, t-1, ω];
+# dualvalue = λ₀ + 
+# sum(
+#     (
+#         param.algorithm == :SDDiP ? 
+#         sum(λ₁.ContStateBin[:s][g][i] * stateInfo.ContStateBin[:s][g][i] for i in 1:param.κ[g]; init = 0.0) 
+#         : λ₁.ContVar[:s][g] *stateInfo.ContVar[:s][g]
+#     ) + 
+#     λ₁.BinVar[:y][g] * stateInfo.BinVar[:y][g]  + 
+#     λ₁.BinVar[:v][g] * stateInfo.BinVar[:v][g]  + 
+#     λ₁.BinVar[:w][g] * stateInfo.BinVar[:w][g]  + 
+#     (
+#         param.algorithm == :SDDPL ? 
+#         sum(λ₁.ContAugState[:s][g][k] * stateInfo.ContAugState[:s][g][k] for k in keys(stateInfoCollection[i, t-1, ω].ContAugState[:s][g]); init = 0.0) 
+#         : 0.0
+#     ) for g in indexSets.G
+# )

@@ -51,13 +51,13 @@ function build_results_path(
         push!(tags, "cut=$(cutType)")
     end
 
-    # # ε
-    # if Base.hasproperty(param, :ε)
-    #     ε = getproperty(param, :ε)
-    #     # 比如 eps=8 表示 ε = 1/8
-    #     eps_int = Int(round(1 / ε))
-    #     push!(tags, "eps=$(eps_int)")
-    # end
+    # partitionRule
+    if algorithm == :SDDPL
+        if Base.hasproperty(param, :partitionRule)
+            partitionRule = getproperty(param, :partitionRule)
+            push!(tags, "partitionRule=$(partitionRule)")
+        end
+    end
 
     # # ℓ1 / ℓ2（如果你只用其中一个，也可以只留一个）
     # if Base.hasproperty(param, :ℓ1)

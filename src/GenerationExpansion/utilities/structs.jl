@@ -29,6 +29,7 @@ mutable struct SDDPParam
     discreteZ        :: Bool
     cutType          :: Symbol
     cutSparsity      :: Bool
+    partitionRule    :: Symbol
     branchingStart   :: Int
     M                :: Int
     T                :: Int
