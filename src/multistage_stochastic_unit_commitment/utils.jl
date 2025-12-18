@@ -112,10 +112,10 @@ function build_results_path(
     cutSelection = param.cutSelection
     push!(tags, "cut=$(cutSelection)")
 
-    # 有 med_method 就加
-    if haskey(param, :med_method)
-        med_method = param.med_method
-        push!(tags, "med=$(med_method)")
+    # 有 partitionRule 就加
+    if haskey(param, :partitionRule)
+        partitionRule = param.partitionRule
+        push!(tags, "med=$(partitionRule)")
     end
 
     # 有 ε 就加 eps 标签
@@ -200,7 +200,7 @@ function param_setup(;
     algorithm::Symbol = :SDDPL,
     T::Int64 = 12,
     num::Int64 = 10,
-    med_method::Symbol = :ExactPoint,
+    partitionRule::Symbol = :ExactPoint,
     case::String = "case30pwl",
     logger_save::Bool = true,
     # 新增两个实验相关参数：
@@ -226,7 +226,7 @@ function param_setup(;
         branch_threshold    = branch_threshold,
         branch_variable     = branch_variable,
         sparse_cut          = sparse_cut,
-        med_method          = med_method,
+        partitionRule       = partitionRule,
         cutSelection        = cutSelection,
         algorithm           = algorithm,
         T                   = T,

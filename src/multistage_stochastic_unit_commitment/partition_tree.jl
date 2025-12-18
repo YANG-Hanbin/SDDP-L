@@ -29,9 +29,9 @@ function update_partition_tree!(
     keys_with_value_1 = maximum([k for (k, v) in stateInfo.ContVarLeaf[:s][g] if v[:var] > 0.5]); ## find the active leaf node: maximum(values(stateInfo.stageSolution[:sur][g]))
     # find the lb and ub of this leaf node 
     info = ModelList[t].ContVarLeaf[:s][g][keys_with_value_1]; (lb, ub) = info[:lb], info[:ub]; 
-    if param.med_method == :IntervalMed
+    if param.partitionRule == :Bisection
         med = (lb + ub)/2; 
-    elseif param.med_method == :ExactPoint
+    elseif param.partitionRule == :Incumbent
         med = stateInfo.ContVar[:s][g] == nothing ? (lb + ub)/2 : stateInfo.ContVar[:s][g]; # round(stateInfo.ContVar[:s][g], digits = 3); 
     end
     

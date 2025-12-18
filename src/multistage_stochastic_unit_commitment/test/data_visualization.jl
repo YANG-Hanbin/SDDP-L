@@ -18,7 +18,7 @@ theme(:default)
 ## ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ##
 algorithm = :SDDPL;
 sparsity = :sparse;
-med = :IntervalMed; # :IntervalMed, :ExactPoint
+med = :Bisection; # :Bisection, :Incumbent
 result_df = DataFrame(
     cut=Symbol[], 
     T=Int[], 
@@ -109,7 +109,7 @@ println(latex_table)
 ## ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ##
 algorithm = :SDDiP;
 sparsity = :sparse;
-med = :IntervalMed; # :IntervalMed, :ExactPoint
+med = :Bisection; # :Bisection, :Incumbent
 result_df = DataFrame(
     cut=Symbol[], 
     T=Int[], 
@@ -200,7 +200,7 @@ println(latex_table)
 ## ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- ##
 algorithm = :SDDPL;
 sparsity = :sparse;
-med = :IntervalMed; # :IntervalMed, :ExactPoint
+med = :Bisection; # :Bisection, :Incumbent
 result_df = DataFrame(
     cut=Symbol[], 
     T=Int[], 
@@ -290,7 +290,7 @@ println(latex_table)
 ## ------------------------------------------------------------  Sparsity  ---------------------------------------------------------------- ##
 ## ---------------------------------------------------------------------------------------------------------------------------------------- ##
 algorithm = :SDDPL
-med = :IntervalMed  # :IntervalMed, :ExactPoint
+med = :Bisection  # :Bisection, :Incumbent
 
 result_df = DataFrame(
     cut      = Symbol[],
