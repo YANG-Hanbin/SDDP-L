@@ -44,13 +44,12 @@ function setupCutGenerationInfo(
     param::SDDPParam = param
 )::NamedTuple
 
-    coreState = StageInfo(
-        1.0,
+    coreStatePLC = StageInfo(
+        - 1.0,
         nothing,
         stateInfo.IntVar === nothing ?
             nothing :
             stageData.ū ./ 2,
-            # stateInfo.IntVar .* 0 .+ 0.5,
         stateInfo.IntVarLeaf === nothing ?
             nothing :
             Dict(
@@ -63,8 +62,26 @@ function setupCutGenerationInfo(
             stateInfo.IntVarBinaries .* 0 .+ 0.5,
     );
 
+    coreStateLNC = StageInfo(
+        - 1.0,
+        nothing,
+        stateInfo.IntVar === nothing ?
+            nothing :
+            - stageData.ū ./ 2,
+        stateInfo.IntVarLeaf === nothing ?
+            nothing :
+            Dict(
+                g => Dict(
+                    k => - 0.5 for k in keys(stateInfo.IntVarLeaf[g])
+                ) for g in keys(stateInfo.IntVarLeaf)
+            ),
+        stateInfo.IntVarBinaries === nothing ?
+            nothing :
+            stateInfo.IntVarBinaries .* 0 .- 0.5,
+    );
+
     πₙ = StageInfo(
-        - 0.0,
+        - 1.0,
         nothing,
         stateInfo.IntVar === nothing ?
             nothing :
@@ -114,13 +131,13 @@ function setupCutGenerationInfo(
         optimize!(model)
         if termination_status(model) == MOI.OPTIMAL
             cutGenerationProgramInfo = ParetoLagrangianCutGenerationProgram(
-                coreState,
+                coreStatePLC,
                 objective_value(model),
                 param.ε
             )
         else 
             cutGenerationProgramInfo = ParetoLagrangianCutGenerationProgram(
-                coreState,
+                coreStatePLC,
                 primal_bound,
                 param.ε
             )
@@ -252,12 +269,12 @@ function setupCutGenerationInfo(
         optimize!(model)
         if termination_status(model) == MOI.OPTIMAL
             cutGenerationProgramInfo = LinearNormalizationLagrangianCutGenerationProgram(
-                coreState,
+                coreStateLNC,
                 objective_value(model)
             )
         else 
             cutGenerationProgramInfo = LinearNormalizationLagrangianCutGenerationProgram(
-                coreState,
+                coreStateLNC,
                 primal_bound
             )
         end 

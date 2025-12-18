@@ -236,7 +236,7 @@ function backwardPass(
     if cutSelection == :PLC
         CutGenerationInfo = ParetoLagrangianCutGeneration{Float64}(
             core_point_strategy, 
-            setup_core_point(
+            setup_PLC_core_point(
                 stateInfoCollection[i, t-1, ω];
                 indexSets = indexSets,
                 paramOPF = paramOPF, 
@@ -269,7 +269,7 @@ function backwardPass(
         optimize!(ModelList[t].model);
 
         CutGenerationInfo = LinearNormalizationLagrangianCutGeneration{Float64}(
-            setup_core_point(
+            setup_LNC_core_point(
                 stateInfoCollection[i, t-1, ω];
                 indexSets = indexSets,
                 paramOPF = paramOPF, 
@@ -286,7 +286,7 @@ function backwardPass(
         );
 
         # CutGenerationInfo = LinearNormalizationLagrangianCutGeneration{Float64}(
-        #     setup_core_point(
+        #     setup_LNC_core_point(
         #         stateInfoCollection[i, t-1, ω];
         #         indexSets = indexSets,
         #         paramOPF = paramOPF, 
