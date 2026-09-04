@@ -125,6 +125,14 @@ function run_single_experiment(
     lncCoreThetaMargin::Float64 = 1e-4,
     cutDiagnostics::Bool      = false,
 )
+    algorithm in SUPPORTED_ALGORITHMS || throw(ArgumentError(
+        "Unknown algorithm: $algorithm.",
+    ))
+    cut in SUPPORTED_CUT_TYPES || throw(ArgumentError("Unknown cut type: $cut."))
+    is_supported_configuration(algorithm, cut) || throw(ArgumentError(
+        "Unsupported MSUC algorithm/cut configuration: $algorithm/$cut.",
+    ))
+
     @info "Running experiment: case=$case, alg=$algorithm, cut=$cut, T=$T, num=$num"
 
     # 1. Build the main algorithm parameter bundle.
@@ -265,10 +273,14 @@ function run_experiment_grid(;
     cutDiagnostics = false,
     task_ids   = nothing
 )::DataFrame
-
-    is_supported_configuration(algorithm::Symbol, cut::Symbol) =
-        algorithm != :SDDiP ||
-        cut ∉ (:ReLUC, :NormalizedReLUC, :SBCReLUC, :SBCNormalizedReLUC)
+    isempty(algorithms) && throw(ArgumentError("algorithms must not be empty."))
+    isempty(cuts) && throw(ArgumentError("cuts must not be empty."))
+    all(algorithm -> algorithm in SUPPORTED_ALGORITHMS, algorithms) ||
+        throw(ArgumentError("algorithms contains an unknown algorithm."))
+    all(cut -> cut in SUPPORTED_CUT_TYPES, cuts) ||
+        throw(ArgumentError("cuts contains an unknown cut type."))
+    all(>(0), nums) || throw(ArgumentError("Every realization count must be positive."))
+    all(>(0), Ts) || throw(ArgumentError("Every horizon must be positive."))
 
     # Build the complete experiment list. Each task is a
     # `(algorithm, cut, num, T, core_point_strategy)` tuple.

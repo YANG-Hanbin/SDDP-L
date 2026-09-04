@@ -1,6 +1,37 @@
 using JLD2
 
 const RESULTS_ROOT = abspath(joinpath(@__DIR__, "..", "new_logger"))
+const SUPPORTED_ALGORITHMS = (:SDDP, :SDDPL, :SDDiP)
+const SUPPORTED_CUT_TYPES = (
+    :LC,
+    :PLC,
+    :AdaptivePLC,
+    :SMC,
+    :AdaptiveSMC,
+    :SBC,
+    :LNC,
+    :ReLUC,
+    :NormalizedReLUC,
+    :SBCLC,
+    :SBCSMC,
+    :SBCPLC,
+    :SBCLNC,
+    :SBCReLUC,
+    :SBCNormalizedReLUC,
+)
+const SDDIP_UNSUPPORTED_CUT_TYPES = (
+    :ReLUC,
+    :NormalizedReLUC,
+    :SBCReLUC,
+    :SBCNormalizedReLUC,
+)
+
+"""Return whether an algorithm/cut pair is implemented by the GEP solver."""
+function is_supported_configuration(algorithm::Symbol, cutType::Symbol)::Bool
+    return algorithm in SUPPORTED_ALGORITHMS &&
+           cutType in SUPPORTED_CUT_TYPES &&
+           !(algorithm == :SDDiP && cutType in SDDIP_UNSUPPORTED_CUT_TYPES)
+end
 
 function relu_lifted_leaf_dot(
     dualInfo::ReLUDualStageInfo,

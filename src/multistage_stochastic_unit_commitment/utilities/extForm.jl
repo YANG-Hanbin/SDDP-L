@@ -7,7 +7,10 @@ nonanticipativity()
 function nonanticipativity(; 
     model::Model = model, 
     scenarioList = scenarioList, 
-    t = t
+    t = t,
+    indexSets::IndexSets = indexSets,
+    scenarioTree::ScenarioTree = scenarioTree,
+    Ξ::Dict{Any, Any} = Ξ,
 )::Nothing
     if t < indexSets.T
         for n in keys(scenarioTree.tree[t].nodes)
@@ -21,7 +24,18 @@ function nonanticipativity(;
             @constraint(model, [j in 2:length(Ξ̃)], model[:y][:, t, Ξ̃[1]] .== model[:y][:, t, Ξ̃[j]])
             @constraint(model, [j in 2:length(Ξ̃)], model[:v][:, t, Ξ̃[1]] .== model[:v][:, t, Ξ̃[j]])
             @constraint(model, [j in 2:length(Ξ̃)], model[:w][:, t, Ξ̃[1]] .== model[:w][:, t, Ξ̃[j]])
-            nonanticipativity(model = model, scenarioList = Ξ̃, t = t + 1)
+            @constraint(model, [j in 2:length(Ξ̃)], model[:x][:, t, Ξ̃[1]] .== model[:x][:, t, Ξ̃[j]])
+            @constraint(model, [j in 2:length(Ξ̃)], model[:P][:, t, Ξ̃[1]] .== model[:P][:, t, Ξ̃[j]])
+            @constraint(model, [j in 2:length(Ξ̃)], model[:θ_angle][:, t, Ξ̃[1]] .== model[:θ_angle][:, t, Ξ̃[j]])
+            @constraint(model, [j in 2:length(Ξ̃)], model[:h][:, t, Ξ̃[1]] .== model[:h][:, t, Ξ̃[j]])
+            nonanticipativity(
+                model = model,
+                scenarioList = Ξ̃,
+                t = t + 1,
+                indexSets = indexSets,
+                scenarioTree = scenarioTree,
+                Ξ = Ξ,
+            )
         end
     end
     return
@@ -41,6 +55,9 @@ function extensive_form(;
     timelimit::Real = 1e3, 
     mipGap::Float64 = 1e-3
 )::NamedTuple{(:OPT, :statevariable_s, :statevariable_y), Tuple{Float64, Vector{Float64}, Vector{Float64}}}
+    0.0 <= mipGap <= 1.0 || throw(ArgumentError("mipGap must be in [0, 1]."))
+    timelimit > 0.0 || throw(ArgumentError("timelimit must be positive."))
+
     (D, G, L, B, T) = (indexSets.D, indexSets.G, indexSets.L, indexSets.B, indexSets.T);
     (Dᵢ, Gᵢ, in_L, out_L) = (indexSets.Dᵢ, indexSets.Gᵢ, indexSets.in_L, indexSets.out_L); 
     W = length(Ξ); ## number of scenarios
@@ -89,17 +106,15 @@ function extensive_form(;
     # on/off status with startup and shutdown decision
     ## t = 1
     @constraint(model, [ω in 1:W, g in indexSets.G], v[g, 1, ω] - w[g, 1, ω] == y[g, 1, ω] - initialStageDecision[:y][g])
-    @constraint(model, [ω in 1:W, g in indexSets.G], s[g, 1, ω] - initialStageDecision[:s][g] ≤ paramOPF.M[g] * initialStageDecision[:y][g] + paramOPF.smin[g] * v[g, 1, ω])
-    @constraint(model, [ω in 1:W, g in indexSets.G], s[g, 1, ω] - initialStageDecision[:s][g] ≥ - paramOPF.M[g] * y[g, 1, ω] - paramOPF.smin[g] * w[g, 1, ω])
+    @constraint(model, [ω in 1:W, g in indexSets.G], s[g, 1, ω] - initialStageDecision[:s][g] ≤ paramOPF.M[g] * (initialStageDecision[:y][g] + v[g, 1, ω]))
+    @constraint(model, [ω in 1:W, g in indexSets.G], s[g, 1, ω] - initialStageDecision[:s][g] ≥ -paramOPF.M[g] * (y[g, 1, ω] + w[g, 1, ω]))
     # t ≥ 2
     @constraint(model, [t in 2:T, ω in 1:W, g in indexSets.G], v[g, t, ω] - w[g, t, ω] == y[g, t, ω] - y[g, t-1, ω])
-    @constraint(model, [t in 2:T, ω in 1:W, g in indexSets.G], s[g, t, ω] - s[g, t-1, ω] ≤ paramOPF.M[g] * y[g, t-1, ω] + paramOPF.smin[g] * v[g, t, ω])
-    @constraint(model, [t in 2:T, ω in 1:W, g in indexSets.G], s[g, t, ω] - s[g, t-1, ω] ≥ - paramOPF.M[g] * y[g, t, ω] - paramOPF.smin[g] * w[g, t, ω])
+    @constraint(model, [t in 2:T, ω in 1:W, g in indexSets.G], s[g, t, ω] - s[g, t-1, ω] ≤ paramOPF.M[g] * (y[g, t-1, ω] + v[g, t, ω]))
+    @constraint(model, [t in 2:T, ω in 1:W, g in indexSets.G], s[g, t, ω] - s[g, t-1, ω] ≥ -paramOPF.M[g] * (y[g, t, ω] + w[g, t, ω]))
 
     # minimum up and down constraint
     ## t = 1
-    @constraint(model, [ω in 1:W, g in indexSets.G], s[g, 1, ω] - initialStageDecision[:s][g] ≤ paramOPF.M[g] * initialStageDecision[:y][g] + paramOPF.smin[g] * v[g, 1, ω])
-    @constraint(model, [ω in 1:W, g in indexSets.G], s[g, 1, ω] - initialStageDecision[:s][g] ≤ - paramOPF.M[g] * y[g, 1, ω] - paramOPF.smin[g] * w[g, 1, ω])
     @constraint(model, [ω in 1:W, g in indexSets.G], v[g, 1, ω] + initialStageDecision[:v][g] ≤ y[g, 1, ω])
     @constraint(model, [ω in 1:W, g in indexSets.G], w[g, 1, ω] + initialStageDecision[:w][g] ≤ 1 - y[g, 1, ω])
     # t ≥ 2
@@ -123,8 +138,31 @@ function extensive_form(;
     );
     
     # nonanticipativity constraints
-    nonanticipativity(model = model, scenarioList = keys(Ξ), t = 1)
+    nonanticipativity(
+        model = model,
+        scenarioList = keys(Ξ),
+        t = 1,
+        indexSets = indexSets,
+        scenarioTree = scenarioTree,
+        Ξ = Ξ,
+    )
     optimize!(model)
+
+    termination = termination_status(model)
+    termination == MOI.OPTIMAL || error(
+        "Extensive-form solve did not reach optimality: " *
+        "termination_status=$termination, primal_status=$(primal_status(model)), " *
+        "raw_status=$(raw_status(model)).",
+    )
+
+    primal = primal_status(model)
+    if primal != MOI.FEASIBLE_POINT && primal != MOI.NEARLY_FEASIBLE_POINT
+        error(
+            "Extensive-form solve produced no primal solution: " *
+            "termination_status=$(termination_status(model)), " *
+            "primal_status=$primal, raw_status=$(raw_status(model)).",
+        )
+    end
 
     return (
         OPT = JuMP.objective_value(model), 

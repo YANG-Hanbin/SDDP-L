@@ -1,5 +1,38 @@
 const CORE_POINT_STRATEGIES = ("Mid", "Eps", "Conv")
 const CONT_AUG_STATE_TOLERANCE = 1e-6
+const SUPPORTED_ALGORITHMS = (:SDDP, :SDDPL, :SDDiP)
+const SUPPORTED_CUT_TYPES = (
+    :LC,
+    :PLC,
+    :AdaptivePLC,
+    :SMC,
+    :AdaptiveSMC,
+    :SBC,
+    :LNC,
+    :ReLUC,
+    :NormalizedReLUC,
+    :SBCLC,
+    :SBCSMC,
+    :SBCPLC,
+    :SBCLNC,
+    :SBCNormalizedCut,
+    :SBCReLUC,
+    :SBCNormalizedReLUC,
+    :NormalizedCut,
+)
+const SDDIP_UNSUPPORTED_CUT_TYPES = (
+    :ReLUC,
+    :NormalizedReLUC,
+    :SBCReLUC,
+    :SBCNormalizedReLUC,
+)
+
+"""Return whether an algorithm/cut pair is implemented by the MSUC solver."""
+function is_supported_configuration(algorithm::Symbol, cutSelection::Symbol)::Bool
+    return algorithm in SUPPORTED_ALGORITHMS &&
+           cutSelection in SUPPORTED_CUT_TYPES &&
+           !(algorithm == :SDDiP && cutSelection in SDDIP_UNSUPPORTED_CUT_TYPES)
+end
 
 function _core_point_strategy(param_cut::NamedTuple)::String
     strategy = String(param_cut.core_point_strategy)

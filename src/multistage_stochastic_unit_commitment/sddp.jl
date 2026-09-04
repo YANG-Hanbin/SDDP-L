@@ -194,9 +194,53 @@ function stochastic_dual_dynamic_programming_algorithm(
         param_levelsetmethod::NamedTuple = param_levelsetmethod,
         param::NamedTuple = param
 )::Dict
+    param.numScenarios >= 1 || throw(ArgumentError("numScenarios must be positive."))
+    1 <= param.M <= param.numScenarios || throw(ArgumentError(
+        "M must be between 1 and numScenarios.",
+    ))
+    param.MaxIter >= 1 || throw(ArgumentError("MaxIter must be positive."))
+    param.T >= 2 || throw(ArgumentError("T must be at least 2."))
+    param.num >= 1 || throw(ArgumentError("num must be positive."))
+    0.0 <= param.terminate_threshold <= 1.0 || throw(ArgumentError(
+        "terminate_threshold is a relative tolerance and must be in [0, 1].",
+    ))
+    param.terminate_time >= 0.0 || throw(ArgumentError(
+        "terminate_time must be nonnegative.",
+    ))
+    0.0 <= param.MIPGap <= 1.0 || throw(ArgumentError(
+        "MIPGap must be in [0, 1].",
+    ))
+    param.TimeLimit > 0.0 || throw(ArgumentError("TimeLimit must be positive."))
+    param.ε > 0.0 || throw(ArgumentError("ε must be positive."))
+    param.LiftIterThreshold >= 1 || throw(ArgumentError(
+        "LiftIterThreshold must be positive.",
+    ))
+    param.branch_threshold >= 0.0 || throw(ArgumentError(
+        "branch_threshold must be nonnegative.",
+    ))
+    is_supported_configuration(param.algorithm, param.cutSelection) || throw(ArgumentError(
+        "Unsupported MSUC algorithm/cut configuration: " *
+        "$(param.algorithm)/$(param.cutSelection).",
+    ))
+    param.partitionRule in (:Bisection, :Incumbent) || throw(ArgumentError(
+        "partitionRule must be :Bisection or :Incumbent.",
+    ))
+    param.branch_variable in (:ALL, :MFV) || throw(ArgumentError(
+        "branch_variable must be :ALL or :MFV.",
+    ))
+    param.sparse_cut in (:sparse, :dense) || throw(ArgumentError(
+        "sparse_cut must be :sparse or :dense.",
+    ))
+    param_levelsetmethod.MaxIter >= 1 || throw(ArgumentError(
+        "The level-method MaxIter must be positive.",
+    ))
+    param.T == indexSets.T == length(scenarioTree.tree) || throw(ArgumentError(
+        "T is inconsistent with the supplied index sets and scenario tree.",
+    ))
+
     ## d: x dim
     initial = now(); i = 1; LB = - Inf; ub_type = :mean; UB = Inf;
-    iter_time::Float64 = 0; total_Time::Float64 = 0; t0 = 0.0; LMiter::Int64 = 0; LM_iter::Int64 = 0; gap::Float64 = 100.0; gapString = "100%"; branchDecision = false;
+    total_Time::Float64 = 0; LM_iter::Int64 = 0; gap::Float64 = 100.0; gapString = "100%"; branchDecision = false;
 
     col_names = [:Iter, :LB, :OPT, :UB, :gap, :time, :LM_iter, :Time, :Branch];                                 # needs to be a vector Symbols
     col_types = [Int64, Float64, Union{Float64,Nothing}, Float64, String, Float64, Int64, Float64, Bool];       # needs to be a vector of types
@@ -242,11 +286,12 @@ function stochastic_dual_dynamic_programming_algorithm(
 
     ####################################################### Main Loop ###########################################################
     while true
-        t0 = now();
         iteration_timer = time_ns();
         forward_time::Float64 = 0.0;
         lifting_time::Float64 = 0.0;
         backward_time::Float64 = 0.0;
+        LM_iter = 0;
+        branchDecision = false;
         cut = get_cut_selection(param.cutSelection, i);
         Ξ̃ = sample_scenarios(; scenarioTree = scenarioTree, numScenarios = param.numScenarios);
         u = Dict{Int64, Float64}();  # to store the value of each scenario
@@ -291,29 +336,25 @@ function stochastic_dual_dynamic_programming_algorithm(
         end
         gap = round((UB-LB)/UB * 100 ,digits = 2);
         gapString = string(gap,"%");
-        push!(solHistory, [i, LB, param.OPT, UB, gapString, iter_time, LM_iter, total_Time, branchDecision]);
+        gap_converged = UB >= LB && UB-LB ≤ param.terminate_threshold * UB;
+        current_total_time = (now() - initial).value / 1000;
+        push!(solHistory, [i, LB, param.OPT, UB, gapString, forward_time, 0, current_total_time, false]);
         push!(gapList, gap);
-        branchDecision = false;
-        if i == 1
-            print_iteration_info_bar();
-        end
-        print_iteration_info(i, LB, UB, gap, iter_time, LM_iter, total_Time);
-
-        save_results_info(
-            param,
-            param_cut,
-            Dict(
-                :solHistory => solHistory,
-                # :solution => stateInfoCollection,
-                :gapHistory => gapList,
-                :runtimeHistory => runtimeHistory,
-            )
-        );
-
-        LM_iter = 0;
-        if total_Time > param.terminate_time || i ≥ param.MaxIter || UB-LB ≤ param.terminate_threshold * UB
+        if current_total_time > param.terminate_time ||
+           i ≥ param.MaxIter ||
+           gap_converged
             iteration_time = elapsed_seconds(iteration_timer);
             total_Time = (now() - initial).value / 1000;
+            solHistory.time[end] = iteration_time;
+            solHistory.LM_iter[end] = 0;
+            solHistory.Time[end] = total_Time;
+            solHistory.Branch[end] = false;
+
+            if i == 1
+                print_iteration_info_bar();
+            end
+            print_iteration_info(i, LB, UB, gap, iteration_time, 0, total_Time);
+
             push_runtime_history!(
                 runtimeHistory;
                 iter = i,
@@ -508,11 +549,21 @@ function stochastic_dual_dynamic_programming_algorithm(
         backward_time = elapsed_seconds(backward_timer);
         LM_iter = floor(Int64, LM_iter/sum(length(scenarioTree.tree[t].nodes) for t in 2:indexSets.T));
 
-        t1 = now(); iter_time = (t1 - t0).value/1000; total_Time = (t1 - initial).value/1000; i += 1;
+        total_Time = (now() - initial).value/1000;
         runtime_iteration_time = elapsed_seconds(iteration_timer);
+        solHistory.time[end] = runtime_iteration_time;
+        solHistory.LM_iter[end] = LM_iter;
+        solHistory.Time[end] = total_Time;
+        solHistory.Branch[end] = branchDecision;
+
+        if i == 1
+            print_iteration_info_bar();
+        end
+        print_iteration_info(i, LB, UB, gap, runtime_iteration_time, LM_iter, total_Time);
+
         push_runtime_history!(
             runtimeHistory;
-            iter = i - 1,
+            iter = i,
             algorithm = param.algorithm,
             cut = cut,
             forward_time = forward_time,
@@ -528,6 +579,23 @@ function stochastic_dual_dynamic_programming_algorithm(
             num_lnc_fallback = cut == :LNC ? num_lnc_fallback : 0,
             num_lnc_core_theta_fallback = cut == :LNC ? num_lnc_core_theta_fallback : 0,
         );
+        save_results_info(
+            param,
+            param_cut,
+            Dict(
+                :solHistory => solHistory,
+                :gapHistory => gapList,
+                :runtimeHistory => runtimeHistory,
+            ),
+        );
+        if total_Time > param.terminate_time
+            return Dict(
+                :solHistory => solHistory,
+                :gapHistory => gapList,
+                :runtimeHistory => runtimeHistory,
+            )
+        end
+        i += 1;
 
     end
 end

@@ -217,11 +217,7 @@ function build_scenarios(; t::Int64 = t, path::Dict{Int64, Int64} = path, prob::
         for n in keys(scenarioTree.tree[t].nodes)
             path_copy = copy(path); path_copy[t] = n;
             prob_copy = copy(prob); 
-            if t == 2 
-                prob_copy = prob_copy * scenarioTree.tree[t-1].prob[1];
-            else
-                prob_copy = prob_copy * scenarioTree.tree[t-1].prob[n];
-            end
+            prob_copy = prob_copy * scenarioTree.tree[t-1].prob[n];
             build_scenarios(; t = t+1, path = path_copy, prob = prob_copy, scenarioTree = scenarioTree, indexSets = indexSets, Ξ = Ξ)
         end
     else

@@ -62,6 +62,9 @@ function gurobiOptimize!(
     outputFlag::Int64 = 0
 )::NamedTuple
 
+    0.0 <= mipGap <= 1.0 || throw(ArgumentError("mipGap must be in [0, 1]."))
+    timeLimit > 0.0 || throw(ArgumentError("timeLimit must be positive."))
+
     (A, n, d) = (binaryInfo.A, binaryInfo.n, binaryInfo.d)
     T = length(Ω); num_Ω = length(Ω[1]);
     W = num_Ω^(T-1) # number of scenarios
@@ -103,6 +106,22 @@ function gurobiOptimize!(
         sum( sum( scenario_tree[ω][2] * (stageDataList[t].c1' * x[:, t, ω] + stageDataList[t].c2' * y[:, t, ω] + stageDataList[t].penalty * slack[t, ω]) for t in 1:T ) for ω in 1:W) 
     );
     optimize!(model)
+
+    termination = termination_status(model)
+    termination == MOI.OPTIMAL || error(
+        "Extensive-form solve did not reach optimality: " *
+        "termination_status=$termination, primal_status=$(primal_status(model)), " *
+        "raw_status=$(raw_status(model)).",
+    )
+
+    primal = primal_status(model)
+    if primal != MOI.FEASIBLE_POINT && primal != MOI.NEARLY_FEASIBLE_POINT
+        error(
+            "Extensive-form solve produced no primal solution: " *
+            "termination_status=$(termination_status(model)), " *
+            "primal_status=$primal, raw_status=$(raw_status(model)).",
+        )
+    end
 
     return (
         OPT = JuMP.objective_value(model), 

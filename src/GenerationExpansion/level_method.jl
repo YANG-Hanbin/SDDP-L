@@ -416,9 +416,9 @@ function LevelSetMethod_optimization!(
         ),
     )
     MOI.set(oracleModel, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(oracleModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(oracleModel, "MIPGap", param.solverGap)
     set_optimizer_attribute(oracleModel, "Threads", 1)
-    set_optimizer_attribute(oracleModel, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(oracleModel, "TimeLimit", param.solverTime)
 
     @variable(oracleModel, z ≥ -param.nxt_bound)
     if param.algorithm == :SDDPL
@@ -441,9 +441,9 @@ function LevelSetMethod_optimization!(
         ),
     )
     MOI.set(nxtModel, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(nxtModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(nxtModel, "MIPGap", param.solverGap)
     set_optimizer_attribute(nxtModel, "Threads", 1)
-    set_optimizer_attribute(nxtModel, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(nxtModel, "TimeLimit", param.solverTime)
 
     @variable(nxtModel, z)
     if param.algorithm == :SDDPL
@@ -702,9 +702,9 @@ function LevelSetMethod_optimization!(
         ),
     )
     MOI.set(oracleModel, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(oracleModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(oracleModel, "MIPGap", param.solverGap)
     set_optimizer_attribute(oracleModel, "Threads", 1)
-    set_optimizer_attribute(oracleModel, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(oracleModel, "TimeLimit", param.solverTime)
 
     @variable(oracleModel, z ≥ -z_lower_bound)
     @variable(oracleModel, -dual_bound_value ≤ x_plus[i = 1:length(stateInfo.IntVar)] ≤ dual_bound_value)
@@ -732,9 +732,9 @@ function LevelSetMethod_optimization!(
         ),
     )
     MOI.set(nxtModel, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(nxtModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(nxtModel, "MIPGap", param.solverGap)
     set_optimizer_attribute(nxtModel, "Threads", 1)
-    set_optimizer_attribute(nxtModel, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(nxtModel, "TimeLimit", param.solverTime)
 
     @variable(nxtModel, z ≥ -z_lower_bound)
     @variable(nxtModel, -dual_bound_value ≤ x_plus[i = 1:length(stateInfo.IntVar)] ≤ dual_bound_value)
@@ -1123,9 +1123,9 @@ function LevelSetMethod_optimization!(
         ),
     )
     MOI.set(oracleModel, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(oracleModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(oracleModel, "MIPGap", param.solverGap)
     set_optimizer_attribute(oracleModel, "Threads",1)
-    set_optimizer_attribute(oracleModel, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(oracleModel, "TimeLimit", param.solverTime)
 
     @variable(oracleModel, z ≥ -param.nxt_bound)
     @variable(oracleModel, xθ <= -cutTypeInfo.min_scale)
@@ -1149,9 +1149,9 @@ function LevelSetMethod_optimization!(
         ),
     )
     MOI.set(nxtModel, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(nxtModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(nxtModel, "MIPGap", param.solverGap)
     set_optimizer_attribute(nxtModel, "Threads", 1)
-    set_optimizer_attribute(nxtModel, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(nxtModel, "TimeLimit", param.solverTime)
 
     @variable(nxtModel, z)
     @variable(nxtModel, xθ <= -cutTypeInfo.min_scale)

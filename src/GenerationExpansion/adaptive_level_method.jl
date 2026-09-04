@@ -243,9 +243,9 @@ function _gep_adaptive_master_model(
         ),
     )
     MOI.set(model, MOI.Silent(), !param.verbose)
-    set_optimizer_attribute(model, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(model, "MIPGap", param.solverGap)
     set_optimizer_attribute(model, "Threads", 1)
-    set_optimizer_attribute(model, "TimeLimit", param.timeSDDP)
+    set_optimizer_attribute(model, "TimeLimit", param.solverTime)
 
     @variable(model, η)
     if param.algorithm == :SDDPL

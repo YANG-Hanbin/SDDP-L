@@ -3,9 +3,22 @@ Run the SDDiP / SDDP / SDDPL algorithm.
 
 Returns a Dict with:
 - :solHistory => DataFrame of iterations (LB, UB, gap, times)
-- :solution   => first-stage solution
+- :solution   => first-stage integer state in the original (non-binarized) space
 - :gapHistory => Vector of gaps
 """
+function first_stage_integer_solution(
+    stateInfo::StageInfo,
+    binaryInfo::BinaryInfo,
+)::Vector{Float64}
+    if stateInfo.IntVar !== nothing
+        return Float64.(stateInfo.IntVar)
+    elseif stateInfo.IntVarBinaries !== nothing
+        return Float64.(binaryInfo.A * stateInfo.IntVarBinaries)
+    end
+
+    error("The first-stage state contains neither integer nor binarized values.")
+end
+
 function add_relu_cut_to_forward_model!(
     model::Model,
     cutInfo::ReLUCutInfo,
@@ -262,6 +275,35 @@ function stochastic_dual_dynamic_programming_algorithm(
     binaryInfo::BinaryInfo = binaryInfo,
     param::SDDPParam = param,
 )::Dict
+    param.sample_size_SDDP >= 2 || throw(ArgumentError(
+        "sample_size_SDDP must be at least 2 because the statistical upper " *
+        "bound uses a corrected sample variance.",
+    ))
+    1 <= param.M <= param.sample_size_SDDP || throw(ArgumentError(
+        "M must be between 1 and sample_size_SDDP.",
+    ))
+    param.iterSDDP >= 1 || throw(ArgumentError("iterSDDP must be positive."))
+    0.0 <= param.gapSDDP <= 1.0 || throw(ArgumentError(
+        "gapSDDP is a relative tolerance and must be in [0, 1].",
+    ))
+    0.0 <= param.solverGap <= 1.0 || throw(ArgumentError(
+        "solverGap must be in [0, 1].",
+    ))
+    param.timeSDDP >= 0.0 || throw(ArgumentError("timeSDDP must be nonnegative."))
+    param.solverTime > 0.0 || throw(ArgumentError("solverTime must be positive."))
+    is_supported_configuration(param.algorithm, param.cutType) || throw(ArgumentError(
+        "Unsupported GEP algorithm/cut configuration: " *
+        "$(param.algorithm)/$(param.cutType).",
+    ))
+    param.levelMethodMaxIter >= 1 || throw(ArgumentError(
+        "levelMethodMaxIter must be positive.",
+    ))
+    param.partitionRule in (:Bisection, :Incumbent) || throw(ArgumentError(
+        "partitionRule must be :Bisection or :Incumbent.",
+    ))
+    param.T == length(stageDataList) == length(Ω) == length(probList) ||
+        throw(ArgumentError("T is inconsistent with the supplied stage data."))
+
     # iteration counter and bounds
     i  = 1
     LB = -Inf
@@ -290,10 +332,8 @@ function stochastic_dual_dynamic_programming_algorithm(
     end
 
     initial    = now()
-    iter_time  = 0.0
     total_Time = 0.0
     while true
-        t0 = now()
         iteration_timer = time_ns()
         forward_time = 0.0
         lifting_time = 0.0
@@ -303,6 +343,7 @@ function stochastic_dual_dynamic_programming_algorithm(
         max_lnc_tightness_gap = 0.0
         num_lnc_fallback = 0
         num_lnc_core_theta_fallback = 0
+        LM_iter = 0
 
         # container for this iteration
         solCollection = Dict()
@@ -344,35 +385,32 @@ function stochastic_dual_dynamic_programming_algorithm(
             σ̂² = Statistics.var(u)
             UB  = μ̄ + 1.96 * sqrt(σ̂² / param.sample_size_SDDP)
         end
-        gap = round((UB - LB) / UB * 100, digits = 2)
+        relative_gap = (UB - LB) / UB
+        gap = round(relative_gap * 100, digits = 2)
         gapString = string(gap, "%")
+        gap_converged = UB >= LB && relative_gap ≤ param.gapSDDP
 
-        # log into DataFrame and gap list
-        push!(sddipResult, [i, LB, UB, gapString, iter_time, LM_iter, total_Time])
+        # Add the bound observation now and fill in this iteration's runtime
+        # fields after either the stopping check or the backward pass.
+        current_total_time = (now() - initial).value / 1000
+        push!(sddipResult, [i, LB, UB, gapString, forward_time, 0, current_total_time])
         push!(gapList, gap)
 
-        # pretty printing
-        if i == 1
-            print_iteration_info_bar()
-        end
-        print_iteration_info(i, LB, UB, gap, iter_time, LM_iter, total_Time)
-
-        # save (if enabled)
-        save_results_info(
-            param,
-            Dict(
-                :solHistory => sddipResult,
-                :gapHistory => gapList,
-                :runtimeHistory => runtimeHistory,
-            )
-        )
-
-        LM_iter = 0
-
         # stopping condition: time limit, target gap, or iteration budget
-        if total_Time > param.timeSDDP || gap ≤ param.gapSDDP || i ≥ param.iterSDDP
+        if current_total_time > param.timeSDDP ||
+           gap_converged ||
+           i ≥ param.iterSDDP
             iteration_time = elapsed_seconds(iteration_timer)
             total_Time = (now() - initial).value / 1000
+            sddipResult.time[end] = iteration_time
+            sddipResult.LM_iter[end] = 0
+            sddipResult.Time[end] = total_Time
+
+            if i == 1
+                print_iteration_info_bar()
+            end
+            print_iteration_info(i, LB, UB, gap, iteration_time, 0, total_Time)
+
             push_runtime_history!(
                 runtimeHistory;
                 iter = i,
@@ -399,7 +437,10 @@ function stochastic_dual_dynamic_programming_algorithm(
             )
             return Dict(
                 :solHistory => sddipResult,
-                :solution   => solCollection[1, 1].IntVar,
+                :solution   => first_stage_integer_solution(
+                    solCollection[1, 1],
+                    binaryInfo,
+                ),
                 :gapHistory => gapList,
                 :runtimeHistory => runtimeHistory,
             )
@@ -791,16 +832,21 @@ function stochastic_dual_dynamic_programming_algorithm(
 
         LM_iter = num_backward_subproblems == 0 ? 0 : floor(Int, LM_iter / num_backward_subproblems)
 
-        # advance iteration counter
-        i += 1
         # time info
-        t1         = now()
-        iter_time  = (t1 - t0).value / 1000
-        total_Time = (t1 - initial).value / 1000
+        total_Time = (now() - initial).value / 1000
         runtime_iteration_time = elapsed_seconds(iteration_timer)
+        sddipResult.time[end] = runtime_iteration_time
+        sddipResult.LM_iter[end] = LM_iter
+        sddipResult.Time[end] = total_Time
+
+        if i == 1
+            print_iteration_info_bar()
+        end
+        print_iteration_info(i, LB, UB, gap, runtime_iteration_time, LM_iter, total_Time)
+
         push_runtime_history!(
             runtimeHistory;
-            iter = i - 1,
+            iter = i,
             algorithm = param.algorithm,
             cut = active_cut_type,
             forward_time = forward_time,
@@ -814,5 +860,25 @@ function stochastic_dual_dynamic_programming_algorithm(
             num_lnc_fallback = num_lnc_fallback,
             num_lnc_core_theta_fallback = num_lnc_core_theta_fallback,
         )
+        save_results_info(
+            param,
+            Dict(
+                :solHistory => sddipResult,
+                :gapHistory => gapList,
+                :runtimeHistory => runtimeHistory,
+            ),
+        )
+        if total_Time > param.timeSDDP
+            return Dict(
+                :solHistory => sddipResult,
+                :solution => first_stage_integer_solution(
+                    solCollection[1, 1],
+                    binaryInfo,
+                ),
+                :gapHistory => gapList,
+                :runtimeHistory => runtimeHistory,
+            )
+        end
+        i += 1
     end
 end

@@ -33,11 +33,6 @@ const GEP_SRC = abspath(joinpath(@__DIR__, ".."))
     include(joinpath(GEP_SRC, "sddp.jl"))
 end
 
-is_supported_configuration(algorithm::Symbol, cutType::Symbol) =
-    algorithm != :SDDiP ||
-    cutType ∉ (:ReLUC, :NormalizedReLUC, :SBCReLUC, :SBCNormalizedReLUC)
-
-
 """
 Run generation expansion experiments over multiple
 algorithms, cut types, T, and num.
@@ -85,6 +80,14 @@ function run_generation_expansion_experiments(;
     lncCoreThetaMargin::Float64 = 1e-4,
     cutDiagnostics::Bool       = false,
 )
+    isempty(algorithms) && throw(ArgumentError("algorithms must not be empty."))
+    isempty(cutTypes) && throw(ArgumentError("cutTypes must not be empty."))
+    all(algorithm -> algorithm in SUPPORTED_ALGORITHMS, algorithms) ||
+        throw(ArgumentError("algorithms contains an unknown algorithm."))
+    all(cutType -> cutType in SUPPORTED_CUT_TYPES, cutTypes) ||
+        throw(ArgumentError("cutTypes contains an unknown cut type."))
+    all(>(0), T_list) || throw(ArgumentError("Every horizon in T_list must be positive."))
+    all(>(0), num_list) || throw(ArgumentError("Every realization count must be positive."))
 
     # results[(algorithm, cutType, T, num)] = sddipResults
     results = Dict{Tuple{Symbol,Symbol,Int,Int}, Dict}()

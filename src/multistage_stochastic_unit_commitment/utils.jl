@@ -192,7 +192,7 @@ function param_setup(;
     algorithm::Symbol = :SDDPL,
     T::Int64 = 12,
     num::Int64 = 10,
-    partitionRule::Symbol = :ExactPoint,
+    partitionRule::Symbol = :Bisection,
     case::String = "case30",
     logger_save::Bool = true,
     lncMinScale::Float64 = 1e-3,
@@ -211,7 +211,10 @@ function param_setup(;
         terminate_threshold = terminate_threshold,
         MaxIter             = MaxIter,
         θ̲                   = 0.0,
-        OPT                 = 0.0,
+        # No exact benchmark value is loaded by the standard experiment path.
+        # Keep the output column for compatibility, but represent an unavailable
+        # reference optimum explicitly instead of reporting a misleading zero.
+        OPT                 = nothing,
         ε                   = ε,
         κ                   = Dict{Int64, Int64}(),
         tightness           = tightness,
