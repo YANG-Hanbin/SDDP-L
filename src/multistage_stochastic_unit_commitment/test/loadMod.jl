@@ -39,6 +39,12 @@ end
 end
 
 
+"""
+    experiment_dir(case::AbstractString, T::Integer, num::Integer)
+
+Return the directory that stores the serialized experiment instance for the
+given case, horizon length, and number of realizations.
+"""
 function experiment_dir(case::AbstractString, T::Integer, num::Integer)
     return joinpath(
         PROJECT_ROOT,
@@ -49,7 +55,8 @@ function experiment_dir(case::AbstractString, T::Integer, num::Integer)
 end
 
 """
-加载一个 (case, T, num) 对应的所有数据
+Load all serialized data associated with one `(case, T, num)` experiment
+instance.
 """
 function load_experiment_data(case::AbstractString, T::Integer, num::Integer)
     dir = experiment_dir(case, T, num)
@@ -59,7 +66,7 @@ function load_experiment_data(case::AbstractString, T::Integer, num::Integer)
     paramDemand      = load(joinpath(dir, "paramDemand.jld2"))["paramDemand"]
     scenarioTree     = load(joinpath(dir, "scenarioTree.jld2"))["scenarioTree"]
 
-    # initialStateInfo 是不随 (T,num) 变的，仍然用你之前的路径
+    # `initialStateInfo` is shared across all `(T, num)` instances of the case.
     initialStateInfo = load(
         joinpath(
             PROJECT_ROOT,
@@ -81,40 +88,53 @@ end
 """
     run_single_experiment(algorithm, cut, T, num; ...)
 
-给定一组 (algorithm, cutSelection, T, num)，构造参数、加载数据、调用
-`stochastic_dual_dynamic_programming_algorithm`，并返回一个 NamedTuple：
-    (config = ..., summary = ..., sddpResults = ...)
+Build the parameters, load the experiment instance, run
+`stochastic_dual_dynamic_programming_algorithm`, and return
+`(config = ..., summary = ..., sddpResults = ...)`.
 """
 function run_single_experiment(
     algorithm::Symbol,
     cut::Symbol,
     T::Integer,
     num::Integer;
-    # 下面这些是你在最前面写的“全局配置”，做成 keyword 更方便调
+    # Global experiment configuration exposed as keyword arguments.
     case::AbstractString      = "case30",
     numScenarios::Int         = 500,
     M::Int                    = 1,
     logger_save::Bool         = true,
+    terminate_time            = 3600,
+    TimeLimit                 = 50,
+    terminate_threshold::Float64 = 1e-3,
+    MIPGap::Float64           = 1e-4,
+    MaxIter::Int              = 3000,
     partitionRule::Symbol     = :Bisection,
     ε::Float64                = 1 / 2^8,
-    ℓ::Float64                = 0.5,
     δ::Float64                = 1e-2,
+    levelMethodMaxIter::Int   = 200,
+    levelMethodVerbose::Bool  = false,
+    core_point_strategy::AbstractString = "Mid",
+    ℓ::Union{Nothing, Float64} = nothing,
+    core_point_weight::Float64 = ℓ === nothing ? 0.75 : ℓ,
+    core_point_epsilon::Float64 = 1e-2,
     sparse_cut::Symbol        = :sparse,
     tightness::Bool           = false,
     branch_variable::Symbol   = :ALL,
     LiftIterThreshold::Int    = 2,
+    lncMinScale::Float64      = 1e-3,
+    lncCoreThetaMargin::Float64 = 1e-4,
+    cutDiagnostics::Bool      = false,
 )
     @info "Running experiment: case=$case, alg=$algorithm, cut=$cut, T=$T, num=$num"
 
-    # 1. 构造 param
+    # 1. Build the main algorithm parameter bundle.
     param = param_setup(
-        terminate_time      = 3600,
-        TimeLimit           = 10,
-        terminate_threshold = 1e-3,
+        terminate_time      = terminate_time,
+        TimeLimit           = TimeLimit,
+        terminate_threshold = terminate_threshold,
         ε                   = ε,
         verbose             = false,
-        MIPGap              = 1e-4,
-        MaxIter             = 3000,
+        MIPGap              = MIPGap,
+        MaxIter             = MaxIter,
         tightness           = tightness,
         numScenarios        = numScenarios,
         M                   = M,
@@ -129,13 +149,17 @@ function run_single_experiment(
         partitionRule       = partitionRule,
         case                = case,
         logger_save         = logger_save,
+        lncMinScale         = lncMinScale,
+        lncCoreThetaMargin  = lncCoreThetaMargin,
+        cutDiagnostics      = cutDiagnostics,
     )
 
-    # 2. 构造 param_cut / param_levelsetmethod
+    # 2. Build cut-specific and level-set parameters.
     param_cut = param_cut_setup(
-        core_point_strategy = "Eps",  # 你原来的设定
+        core_point_strategy = String(core_point_strategy),
         δ                   = δ,
-        ℓ                   = ℓ,
+        core_point_weight   = core_point_weight,
+        core_point_epsilon  = core_point_epsilon,
     )
 
     param_levelsetmethod = param_levelsetmethod_setup(
@@ -143,14 +167,14 @@ function run_single_experiment(
         λ         = 0.5,
         threshold = 1e-4,
         nxt_bound = 1e10,
-        MaxIter   = 200,
-        verbose   = false,
+        MaxIter   = levelMethodMaxIter,
+        verbose   = levelMethodVerbose,
     )
 
-    # 3. 加载数据
+    # 3. Load the serialized experiment data.
     data = load_experiment_data(case, T, num)
 
-    # 4. 把参数 / 数据广播到 worker（如果你仍然需要）
+    # 4. Broadcast data and parameters to all workers.
     @everywhere begin
         indexSets        = $data.indexSets
         paramOPF         = $data.paramOPF
@@ -162,7 +186,7 @@ function run_single_experiment(
         param            = $param
     end
 
-    # 5. 跑算法
+    # 5. Run the selected algorithm.
     t_start = now()
     sddpResults = stochastic_dual_dynamic_programming_algorithm(
         data.scenarioTree,
@@ -175,11 +199,11 @@ function run_single_experiment(
         param                = param,
     )
     t_end = now()
-    elapsed = (t_end - t_start).value / 1000  # 秒
+    elapsed = (t_end - t_start).value / 1000
 
-    # 6. 从结果里抽一点 summary 出来（方便做表）
+    # 6. Extract a compact summary row for downstream tables.
     solHistory = sddpResults[:solHistory]
-    last_row   = solHistory[end, :]   # 最后一行
+    last_row   = solHistory[end, :]
 
     summary = (
         case      = case,
@@ -192,9 +216,12 @@ function run_single_experiment(
         gap_str   = last_row.gap,
         time      = last_row.Time,
         runtime   = elapsed,
+        core_point_strategy = String(core_point_strategy),
+        core_point_weight = core_point_weight,
+        core_point_epsilon = core_point_epsilon,
     )
 
-    # 7. 主进程做一次 GC，worker 的你原来就有 @everywhere GC.gc()
+    # 7. Run garbage collection on the main process.
     GC.gc()
 
     return (config = param, summary = summary, sddpResults = sddpResults)
@@ -203,44 +230,63 @@ end
 """
     run_experiment_grid()
 
-跑一整个实验网格，并返回一个 DataFrame 的 summary。
+Run an entire experiment grid and return a summary `DataFrame`.
 """
 function run_experiment_grid(;
     case = "case30",
     algorithms   = [:SDDPL, :SDDP, :SDDiP],
-    cuts         = [:PLC, :SMC, :LC, :SBC, :SBCLC, :SBCSMC, :SBCPLC, :NormalizedCut],
+    cuts         = [:PLC, :SMC, :LC, :LNC, :SBC, :SBCLC, :SBCSMC, :SBCPLC, :ReLUC, :NormalizedReLUC],
     nums         = [5, 10],
     Ts           = [6, 8, 12],
     numScenarios = 500,
     M            = 1,
     logger_save  = true,
+    terminate_time = 3600,
+    TimeLimit    = 50,
+    terminate_threshold = 1e-3,
+    MIPGap       = 1e-4,
+    MaxIter      = 3000,
     partitionRule= :Bisection,
     ε            = 1 / 2^8,
-    ℓ            = 0.5,
     δ            = 1e-2,
+    levelMethodMaxIter = 200,
+    levelMethodVerbose = false,
+    core_point_strategies = ["Mid"],
+    ℓ::Union{Nothing, Float64} = nothing,
+    core_point_weight = ℓ === nothing ? 0.75 : ℓ,
+    core_point_epsilon = 1e-2,
     sparse_cut   = :sparse,
     tightness    = false,
     branch_variable   = :ALL,
     LiftIterThreshold = 2,
+    lncMinScale = 1e-3,
+    lncCoreThetaMargin = 1e-4,
+    cutDiagnostics = false,
     task_ids   = nothing
 )::DataFrame
 
-    # ======== 先生成所有实验组合的列表 ========
-    # 每个元素是一个 (algorithm, cut, num, T) 的 tuple
-    all_tasks = [(a, c, n, T)
+    is_supported_configuration(algorithm::Symbol, cut::Symbol) =
+        algorithm != :SDDiP ||
+        cut ∉ (:ReLUC, :NormalizedReLUC, :SBCReLUC, :SBCNormalizedReLUC)
+
+    # Build the complete experiment list. Each task is a
+    # `(algorithm, cut, num, T, core_point_strategy)` tuple.
+    all_tasks = [(a, c, n, T, cps)
                  for a in algorithms
                  for c in cuts
                  for n in nums
-                 for T in Ts]
+                 for T in Ts
+                 for cps in core_point_strategies
+                 if is_supported_configuration(a, c)]
 
-    # 如果指定了 task_ids，就只保留那一部分
+    # Optionally keep only the requested task subset.
     if task_ids !== nothing
         all_tasks = all_tasks[task_ids]
     end
 
     @info "Total experiment configs: $(length(all_tasks))"
 
-    # ======== 用一个 DataFrame 收集 summary ========
+    # Collect one summary row per experiment configuration.
     summary_df = DataFrame(
         case      = String[],
         algorithm = Symbol[],
@@ -252,13 +298,16 @@ function run_experiment_grid(;
         gap_str   = String[],
         time      = Float64[],
         runtime   = Float64[],
+        core_point_strategy = String[],
+        core_point_weight = Float64[],
+        core_point_epsilon = Float64[],
     )
 
-    # ======== 按任务列表依次跑 ========
-    for (algorithm, cut, num, T) in all_tasks
+    # Execute the tasks sequentially.
+    for (algorithm, cut, num, T, core_point_strategy) in all_tasks
         println()
         @info "=================================================================="
-        @info "Start: case=$case, alg=$algorithm, cut=$cut, T=$T, num=$num"
+        @info "Start: case=$case, alg=$algorithm, cut=$cut, T=$T, num=$num, core=$core_point_strategy"
         @info "=================================================================="
 
         result = run_single_experiment(
@@ -267,14 +316,26 @@ function run_experiment_grid(;
             numScenarios      = numScenarios,
             M                 = M,
             logger_save       = logger_save,
+            terminate_time    = terminate_time,
+            TimeLimit         = TimeLimit,
+            terminate_threshold = terminate_threshold,
+            MIPGap            = MIPGap,
+            MaxIter           = MaxIter,
             partitionRule     = partitionRule,
             ε                 = ε,
-            ℓ                 = ℓ,
             δ                 = δ,
+            levelMethodMaxIter = levelMethodMaxIter,
+            levelMethodVerbose = levelMethodVerbose,
+            core_point_strategy = core_point_strategy,
+            core_point_weight = core_point_weight,
+            core_point_epsilon = core_point_epsilon,
             sparse_cut        = sparse_cut,
             tightness         = tightness,
             branch_variable   = branch_variable,
             LiftIterThreshold = LiftIterThreshold,
+            lncMinScale       = lncMinScale,
+            lncCoreThetaMargin = lncCoreThetaMargin,
+            cutDiagnostics    = cutDiagnostics,
         )
 
         s = result.summary
@@ -289,10 +350,39 @@ function run_experiment_grid(;
             s.gap_str,
             s.time,
             s.runtime,
+            s.core_point_strategy,
+            s.core_point_weight,
+            s.core_point_epsilon,
         ))
 
         @everywhere GC.gc()
     end
 
     return summary_df
+end
+
+"""
+    run_msuc_core_point_sensitivity(; ...)
+
+Run the core-point sensitivity study for MSUC. The default configuration
+uses the largest case30 instance and compares `Eps` and `Conv` for PLC/LNC
+under SDDP-L with bisection branching.
+"""
+function run_msuc_core_point_sensitivity(;
+    case::AbstractString = "case30",
+    T::Int = 12,
+    num::Int = 10,
+    core_point_strategies = ["Eps", "Conv"],
+    kwargs...
+)::DataFrame
+    return run_experiment_grid(;
+        case = case,
+        algorithms = [:SDDPL],
+        cuts = [:PLC, :LNC],
+        nums = [num],
+        Ts = [T],
+        partitionRule = :Bisection,
+        core_point_strategies = core_point_strategies,
+        kwargs...,
+    )
 end

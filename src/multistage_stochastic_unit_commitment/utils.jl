@@ -1,16 +1,13 @@
+const RESULTS_ROOT = joinpath(@__DIR__, "..", "results")
+
 """
-function sample_scenarios(; 
-    numScenarios::Int64 = 10, 
-    scenarioTree::ScenarioTree = scenarioTree
-)
+    sample_scenarios(;
+        numScenarios::Int64 = 10,
+        scenarioTree::ScenarioTree = scenarioTree,
+    )
 
-# Arguments
-
-    1. `numScenarios`: The number of scenarios will be sampled
-    2. `scenarioTree`: A scenario tree
-
-# Returns
-    1. `Ξ`: A subset of scenarios.
+Sample `numScenarios` paths independently from the scenario tree and return
+them in the dictionary format expected by the SDDP routines.
 """
 function sample_scenarios(; 
     numScenarios::Int64 = 10, 
@@ -20,16 +17,18 @@ function sample_scenarios(;
     for ω in 1:numScenarios
         ξ = Dict{Int64, RandomVariables}()
         ξ[1] = scenarioTree.tree[1].nodes[1]
+        first_stage_nodes = sort(collect(keys(scenarioTree.tree[1].prob)))
         n = wsample(
-            collect(keys(scenarioTree.tree[1].prob)), 
-            collect(values(scenarioTree.tree[1].prob)), 
+            first_stage_nodes,
+            [scenarioTree.tree[1].prob[node] for node in first_stage_nodes],
             1
         )[1]
         for t in 2:length(keys(scenarioTree.tree))
             ξ[t] = scenarioTree.tree[t].nodes[n]
+            next_stage_nodes = sort(collect(keys(scenarioTree.tree[t].prob)))
             n = wsample(
-                collect(keys(scenarioTree.tree[t].prob)), 
-                collect(values(scenarioTree.tree[t].prob)), 
+                next_stage_nodes,
+                [scenarioTree.tree[t].prob[node] for node in next_stage_nodes],
             1)[1]
         end
         Ξ[ω] = ξ
@@ -38,29 +37,17 @@ function sample_scenarios(;
 end
 
 """
+    print_iteration_info(
+        i::Int64,
+        LB::Float64,
+        UB::Float64,
+        gap::Float64,
+        iter_time::Float64,
+        LM_iter::Int,
+        total_Time::Float64,
+    )::Nothing
 
-function print_iteration_info(
-    i::Int, 
-    LB::Float64, 
-    UB::Float64,
-    gap::Float64, 
-    iter_time::Float64, 
-    LM_iter::Int, 
-    total_time::Float64
-)
-
-# Arguments
-
-    1. `i`: The current iteration number
-    2. `LB`: The lower bound
-    3. `UB`: The upper bound
-    4. `gap`: The gap between the lower and upper bounds
-    5. `iter_time`: The time spent on the current iteration
-    6. `LM_iter`: The number of Lagrangian multipliers updated in the current iteration
-    7. `total_time`: The total time spent on the algorithm
-
-# Prints
-
+Print one formatted row of the experiment progress table.
 """
 function print_iteration_info(
     i::Int64, 
@@ -97,7 +84,7 @@ function build_results_path(
     T         = param.T
     num       = param.num
 
-    # --- 目录层级 ---
+    # Directory hierarchy.
     dir = joinpath(
         root,
         "case=$(case)",
@@ -106,46 +93,51 @@ function build_results_path(
         "Real=$(num)",
     )
 
-    # --- 文件名标签 ---
+    # Filename tags.
     tags = String[]
 
     cutSelection = param.cutSelection
     push!(tags, "cut=$(cutSelection)")
 
-    # 有 partitionRule 就加
+    # Partition rule, when available.
     if haskey(param, :partitionRule)
         partitionRule = param.partitionRule
         push!(tags, "med=$(partitionRule)")
     end
 
-    # 有 ε 就加 eps 标签
+    # Epsilon tag.
     if haskey(param, :ε)
         ε = param.ε
         eps_int = Int(round(1 / ε))
         push!(tags, "eps=$(eps_int)")
     end
 
-    # 有 ℓ 就加 ell 标签
-    if haskey(param_cut, :ℓ)
-        ℓ = param_cut.ℓ
-        push!(tags, "ell=$(ℓ)")
+    if haskey(param_cut, :core_point_strategy)
+        strategy = param_cut.core_point_strategy
+        push!(tags, "core=$(strategy)")
+
+        if strategy == "Conv"
+            weight = haskey(param_cut, :core_point_weight) ? param_cut.core_point_weight : param_cut.ℓ
+            push!(tags, "cpw=$(weight)")
+        elseif strategy == "Eps" && haskey(param_cut, :core_point_epsilon)
+            push!(tags, "cpeps=$(param_cut.core_point_epsilon)")
+        end
     end
 
-    # 有 sparsity 就加 sparsity 标签
+    # Sparsity tag.
     if haskey(param, :sparse_cut)
         sparse_cut = param.sparse_cut
         push!(tags, "sparsity=$(sparse_cut)")
     end
 
-    # 有 M 就加 M 标签
+    # Repetition counter or experiment multiplier.
     if haskey(param, :M)
         M = param.M
         push!(tags, "M=$(M)")
     end
 
-    # run_id：如果外面没指定，用时间戳
+    # Default run identifier: current date.
     if run_id === nothing
-        # ts = Dates.format(now(), "yyyymmdd\\THHMMSS")
         ts = Dates.format(now(), "yyyymmdd")
         run_id = ts
     end
@@ -179,7 +171,7 @@ function save_results_info(
     return nothing
 end
 
-const DEFAULT_RESULTS_ROOT = joinpath(@__DIR__, "..", "results")
+const DEFAULT_RESULTS_ROOT = RESULTS_ROOT
 
 function param_setup(;
     terminate_time::Any = 3600,
@@ -201,9 +193,12 @@ function param_setup(;
     T::Int64 = 12,
     num::Int64 = 10,
     partitionRule::Symbol = :ExactPoint,
-    case::String = "case30pwl",
+    case::String = "case30",
     logger_save::Bool = true,
-    # 新增两个实验相关参数：
+    lncMinScale::Float64 = 1e-3,
+    lncCoreThetaMargin::Float64 = 1e-4,
+    cutDiagnostics::Bool = false,
+    # Experiment-output controls.
     results_root::AbstractString = DEFAULT_RESULTS_ROOT,
     run_id::Union{Nothing,String} = nothing,
 )::NamedTuple
@@ -233,7 +228,9 @@ function param_setup(;
         num                 = num,
         case                = case,
         logger_save         = logger_save,
-        # 新增
+        lncMinScale         = lncMinScale,
+        lncCoreThetaMargin  = lncCoreThetaMargin,
+        cutDiagnostics      = cutDiagnostics,
         results_root        = results_root,
         run_id              = run_id,
     )
@@ -259,13 +256,18 @@ end
 
 
 function param_cut_setup(;
-    core_point_strategy::String = "Eps", # "Mid", "Eps"
+    core_point_strategy::String = "Mid",
     δ::Float64 = 1e-3,
-    ℓ::Float64 = .0,
+    ℓ::Float64 = 0.75,
+    core_point_weight::Union{Nothing, Float64} = nothing,
+    core_point_epsilon::Float64 = 1e-2,
 )::NamedTuple
+    weight = core_point_weight === nothing ? ℓ : core_point_weight
     return (
-        core_point_strategy = core_point_strategy, # "Mid", "Eps"
+        core_point_strategy = core_point_strategy,
         δ                   = δ,
-        ℓ                   = ℓ,
+        ℓ                   = weight,
+        core_point_weight   = weight,
+        core_point_epsilon  = core_point_epsilon,
     )
 end

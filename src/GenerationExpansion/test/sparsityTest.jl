@@ -1,4 +1,4 @@
-cd("/Users/aaron/SDDiP_with_EnhancedCut/src/GenerationExpansion/test")  # 改变当前工作目录到脚本所在的目录
+cd(@__DIR__)
 include(joinpath(@__DIR__, "loadMod.jl"))
 
 if abspath(PROGRAM_FILE) == @__FILE__
@@ -6,6 +6,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
     cutTypes = [:LC, :SMC, :PLC, :LNC]
     T_list = [10, 15]
     num_list = [5, 10]
+    partitionRule = :Bisection # available options: :Bisection or :Incumbent
 
     for cutSparsity in [true, false]
         results = run_generation_expansion_experiments(
@@ -22,7 +23,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
             ε                           = 1e-4,
             discreteZ                   = true,
             cutSparsity                 = cutSparsity,
-            partitionRule               = :Incumbent,
+            partitionRule               = partitionRule,
             branchingStart              = 3,
             M                           = 1,
             verbose                     = false,

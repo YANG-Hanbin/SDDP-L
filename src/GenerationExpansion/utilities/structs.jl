@@ -5,6 +5,8 @@ Fields:
 - timeSDDP         : time limit (in seconds)
 - gapSDDP          : relative optimality gap tolerance
 - iterSDDP         : maximum number of iterations
+- levelMethodMaxIter : maximum number of inner level-method iterations used
+  during cut generation
 - sample_size_SDDP : number of sampled scenarios per iteration
 - ε                : step size / risk parameter (depending on context)
 - discreteZ        : whether to use a discrete approximation for Z
@@ -17,11 +19,18 @@ Fields:
 - nxt_bound        : lower bound for the next subproblem (e.g., Δ model)
 - logger_save      : whether to save logs / results to disk
 - algorithm        : symbol describing the algorithm variant (e.g. :SDDiP)
+- corePointStrategy : core point rule used by PLC/LNC (`:Mid`, `:Eps`, `:Conv`)
+- corePointWeight   : convex weight used by the `:Conv` rule
+- corePointEpsilon  : relative interior margin used by the `:Eps` rule
+- lncMinScale       : minimum accepted value of `-π₀` for LNC cuts
+- lncCoreThetaMargin: relative fallback margin for the LNC core epigraph value
+- cutDiagnostics    : whether to print cut-generation diagnostics
 """
 mutable struct SDDPParam
     timeSDDP         :: Float64
     gapSDDP          :: Float64
     iterSDDP         :: Int
+    levelMethodMaxIter :: Int
     solverGap        :: Float64
     solverTime       :: Float64
     sample_size_SDDP :: Int
@@ -40,6 +49,12 @@ mutable struct SDDPParam
     nxt_bound        :: Float64
     logger_save      :: Bool
     algorithm        :: Symbol
+    corePointStrategy :: Symbol
+    corePointWeight   :: Float64
+    corePointEpsilon  :: Float64
+    lncMinScale       :: Float64
+    lncCoreThetaMargin :: Float64
+    cutDiagnostics    :: Bool
 end
 
 """
@@ -88,7 +103,8 @@ end
 
 ########################### Level-set method data ################################
 """
-Record level method information:f(x_j) 和 max g_k(x_j)。
+Store the level-method history at a bundle point, namely `f(x_j)` and
+`max_k g_k(x_j)`.
 """
 mutable struct FunctionHistory
     obj_history        :: Dict{Int64, Float64}
@@ -131,6 +147,34 @@ mutable struct StageInfo
 end
 
 """
+Dual iterate information for ReLU-based cut generation in the SDDP benchmark.
+
+Fields
+------
+- `StateValue`:
+    coefficient of the epigraph variable `θ` in the normalized ReLU cut.
+    It is `nothing` for the non-normalized ReLU cut.
+- `IntVarPlus`:
+    coefficients associated with positive state deviations.
+- `IntVarMinus`:
+    coefficients associated with negative state deviations.
+- `IntVarLeaf`:
+    linear lifted-state coefficients used only by SDDP-L.
+"""
+mutable struct ReLUDualStageInfo
+    StateValue          ::Union{Nothing, Float64}
+    IntVarPlus          ::Union{Nothing, Vector}
+    IntVarMinus         ::Union{Nothing, Vector}
+    IntVarLeaf          ::Union{Nothing, Dict}
+end
+
+ReLUDualStageInfo(
+    StateValue::Union{Nothing, Float64},
+    IntVarPlus::Union{Nothing, Vector},
+    IntVarMinus::Union{Nothing, Vector},
+) = ReLUDualStageInfo(StateValue, IntVarPlus, IntVarMinus, nothing)
+
+"""
 Current iteration information:
 - var:   decision variable
 - obj:   objective function f(x)
@@ -144,6 +188,31 @@ mutable struct CurrentInfo
     con             :: Dict{Int64, Float64}                                                         
     d_obj           :: Dict{Symbol, Any}                                                            
     d_con           :: Dict{Int, Any}      
+end
+
+"""
+Current iteration information for ReLU-based cut generation.
+
+Fields
+------
+- `var`:
+    current ReLU-dual iterate.
+- `obj`:
+    oracle objective value used by the level-set method.
+- `con`:
+    linearized feasibility constraints.
+- `d_obj`:
+    subgradients of the oracle objective with respect to
+    `(:plus, :minus, :pi0)`.
+- `d_con`:
+    subgradients of the feasibility constraints.
+"""
+mutable struct ReLUCurrentInfo
+    var             :: ReLUDualStageInfo
+    obj             :: Float64
+    con             :: Dict{Int64, Float64}
+    d_obj           :: Dict{Symbol, Any}
+    d_con           :: Dict{Int, Any}
 end
 """
 Binary expansion information: x = A * L, L ∈ {0, 1}ⁿ。
@@ -207,7 +276,7 @@ mutable struct CutGenerationParamInfo
     verbose     :: Bool
     stateInfo   :: Union{StageInfo, Nothing}
     cutSelection:: Symbol
-    πₙ          :: StageInfo
+    πₙ          :: Union{StageInfo, ReLUDualStageInfo}
 end
 
 abstract type CutGenerationProgram end
@@ -249,4 +318,35 @@ end
 mutable struct LinearNormalizationLagrangianCutGenerationProgram{T} <: CutGenerationProgram 
     CoreState           ::Union{StageInfo, Nothing}
     primal_bound        ::Union{Nothing, T}
+    theta_anchor        ::Union{Nothing, T}
+    min_scale           ::Float64
+    core_theta_fallback ::Bool
+end
+
+mutable struct ReLULagrangianCutGenerationProgram{T} <: CutGenerationProgram
+    primal_bound        ::Union{Nothing, T}
+end
+
+mutable struct NormalizedReLULagrangianCutGenerationProgram{T} <: CutGenerationProgram
+    NormalizationInfo   ::Union{ReLUDualStageInfo, Nothing}
+    # Incumbent epigraph value θ̂_n appearing in the normalized dual objective.
+    incumbent_theta     ::Union{Nothing, T}
+    # Incumbent node primal value Q_n(x̂), retained separately for scaling and
+    # validity checks.
+    primal_bound        ::Union{Nothing, T}
+end
+
+"""
+ReLU cut coefficients returned by the backward pass.
+
+Fields
+------
+- `rhs`:
+    right-hand side value `𝓛(π)` of the ReLU cut.
+- `dualInfo`:
+    ReLU-dual coefficients.
+"""
+mutable struct ReLUCutInfo{T}
+    rhs                 ::T
+    dualInfo            ::ReLUDualStageInfo
 end

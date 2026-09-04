@@ -27,8 +27,8 @@ function forwardModel!(
     set_optimizer_attribute(model, "MIPFocus", 3);           
 
     # decision variables
-    @variable(model, x[g = 1:binaryInfo.d] ≥ 0, Int)   # number of generators built in this stage
-    @variable(model, St[g = 1:binaryInfo.d] ≥ 0, Int)  # total generators after investment
+    @variable(model, x[g = 1:binaryInfo.d] ≥ 0, Int)                    # number of generators built in this stage
+    @variable(model, 0 ≤ St[g = 1:binaryInfo.d] ≤ stageData.ū[g], Int) # total generators after investment
     @variable(model, y[g = 1:binaryInfo.d] ≥ 0)        # generation
     @variable(model, slack ≥ 0)
     @variable(model, θ ≥ 0.0)
@@ -95,11 +95,10 @@ function forwardModel!(
 
         # copy variable Sc for previous state
         if param.discreteZ
-            @variable(model, Sc[g = 1:binaryInfo.d] ≥ 0, Int)
+            @variable(model, 0 ≤ Sc[g = 1:binaryInfo.d] ≤ stageData.ū[g], Int)
         else
-            @variable(model, Sc[g = 1:binaryInfo.d] ≥ 0)
+            @variable(model, 0 ≤ Sc[g = 1:binaryInfo.d] ≤ stageData.ū[g])
         end
-        @constraint(model, Sc .≤ stageData.ū)
         model[:Sc] = Sc
 
         # copy of region indicator (for cuts or auxiliary use)
@@ -213,11 +212,10 @@ function forwardModel!(
     elseif param.algorithm == :SDDP
         # explicit previous state Sc
         if param.discreteZ
-            @variable(model, Sc[g = 1:binaryInfo.d] ≥ 0, Int)
+            @variable(model, 0 ≤ Sc[g = 1:binaryInfo.d] ≤ stageData.ū[g], Int)
         else
-            @variable(model, Sc[g = 1:binaryInfo.d] ≥ 0)
+            @variable(model, 0 ≤ Sc[g = 1:binaryInfo.d] ≤ stageData.ū[g])
         end
-        @constraint(model, Sc .≤ stageData.ū)
         model[:Sc] = Sc
 
         @constraint(model, Sc + x .== St)

@@ -1,4 +1,4 @@
-cd("/Users/aaron/SDDiP_with_EnhancedCut/src/multistage_stochastic_unit_commitment/test")  # 改变当前工作目录到脚本所在的目录
+cd(@__DIR__)
 include(joinpath(@__DIR__, "loadMod.jl"))
 
 if abspath(PROGRAM_FILE) == @__FILE__

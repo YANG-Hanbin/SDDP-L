@@ -212,6 +212,44 @@ mutable struct StateInfo
     ContStateBin        ::Union{Nothing, Dict{Any, Dict{Any, Dict{Any, Any}}}}
 end
 
+"""
+Dual iterate information for ReLU-based cut generation in the SDDP benchmark.
+
+Fields
+------
+- `StateValue`:
+    coefficient of the epigraph variable in the normalized ReLU cut.
+- `BinVarPlus` and `BinVarMinus`:
+    positive / negative deviation coefficients for the binary state variables.
+- `ContVarPlus` and `ContVarMinus`:
+    positive / negative deviation coefficients for the continuous state variables.
+- `ContAugState`:
+    linear lifted-state coefficients used only by SDDP-L.
+"""
+mutable struct ReLUDualStateInfo
+    StateValue          ::Union{Nothing, Float64}
+    BinVarPlus          ::Union{Nothing, Dict{Any, Dict{Any, Any}}}
+    BinVarMinus         ::Union{Nothing, Dict{Any, Dict{Any, Any}}}
+    ContVarPlus         ::Union{Nothing, Dict{Any, Dict{Any, Any}}}
+    ContVarMinus        ::Union{Nothing, Dict{Any, Dict{Any, Any}}}
+    ContAugState        ::Union{Nothing, Dict{Any, Dict{Any, Dict{Any, Any}}}}
+end
+
+ReLUDualStateInfo(
+    StateValue::Union{Nothing, Float64},
+    BinVarPlus::Union{Nothing, Dict{Any, Dict{Any, Any}}},
+    BinVarMinus::Union{Nothing, Dict{Any, Dict{Any, Any}}},
+    ContVarPlus::Union{Nothing, Dict{Any, Dict{Any, Any}}},
+    ContVarMinus::Union{Nothing, Dict{Any, Dict{Any, Any}}},
+) = ReLUDualStateInfo(
+    StateValue,
+    BinVarPlus,
+    BinVarMinus,
+    ContVarPlus,
+    ContVarMinus,
+    nothing,
+)
+
 ## ====================================================================================== ##
 ## ================================= Level-set Method =================================== ##
 ## ====================================================================================== ##
@@ -236,7 +274,7 @@ mutable struct LevelSetMethodOracleParam
     nxt_bound     ::Union{Nothing, Float64}                     ## lower bound for solving next iteration point π
     MaxIter       ::Union{Nothing, Any}     
     verbose       ::Union{Nothing, Bool}                        ## if True will print Δ info
-    x₀            ::Union{Nothing, StateInfo}
+    x₀            ::Union{Nothing, StateInfo, ReLUDualStateInfo}
 end
 
 ## data structure for level-set method
@@ -252,6 +290,14 @@ mutable struct CurrentInfo
     G            :: Dict{Int64, Float64} 
     df           :: Dict{Symbol, Dict{Int64, Any}}
     dG           :: Dict{Int64, StateInfo}                          ## actually is a matrix.  But we use dict to store it
+end
+
+mutable struct ReLUDualCurrentInfo
+    x            :: ReLUDualStateInfo
+    f            :: Float64
+    G            :: Dict{Int64, Float64}
+    df           :: Dict{Symbol, Any}
+    dG           :: Dict{Int64, Dict{Symbol, Any}}
 end
 
 mutable struct NormalizationCurrentInfo
@@ -274,14 +320,30 @@ struct ModelInfo
     z     :: VariableRef
 end
 
+struct ReLUModelInfo
+    model    :: Model
+    s_plus   :: Any
+    s_minus  :: Any
+    y_plus   :: Any
+    y_minus  :: Any
+    v_plus   :: Any
+    v_minus  :: Any
+    w_plus   :: Any
+    w_minus  :: Any
+    sur      :: Any
+    x0       :: Any
+    y        :: VariableRef
+    z        :: VariableRef
+end
+
 
 ## ====================================================================================== ##
 ## ================================== Lagrangian Cuts =================================== ##
 ## ====================================================================================== ##
 """
     mutable struct ParetoLagrangianCutGeneration  <: CutGeneration 
-        core_point_strategy ::Symbol
-        core_point          ::Union{Nothing, Dict{Any, Dict{Any, Dict{Any, Dict{Symbol, Any}}}}}
+        core_point_strategy ::String
+        core_point          ::Union{Nothing, StateInfo}
         δ                   ::Float64
     end
 
@@ -314,8 +376,35 @@ end
 mutable struct StrengthenedBendersCutGeneration{T} <: CutGeneration 
 
 end
-mutable struct LinearNormalizationLagrangianCutGeneration{T} <: CutGeneration 
+mutable struct LinearNormalizationLagrangianCutGeneration{T} <: CutGeneration
+    # Normalization vector in the lifted epigraph space:
+    #     (x̂ - xᶜ, θ̂ - θᶜ).
+    # The level method uses a raw epigraph multiplier π₀ ≤ 0 and the master
+    # cut stores the positive scale -π₀.
     uₙ                  ::Union{Nothing, StateInfo}
     uₙ₀                 ::Union{Nothing, Float64}
     primal_bound        ::Union{Nothing, T}
+    theta_anchor        ::Union{Nothing, T}
+    core_theta          ::Union{Nothing, T}
+    min_scale           ::Float64
+    core_theta_fallback ::Bool
+end
+
+mutable struct ReLULagrangianCutGeneration{T} <: CutGeneration
+    primal_bound        ::Union{Nothing, T}
+end
+
+mutable struct NormalizedReLULagrangianCutGeneration{T} <: CutGeneration
+    uₙ                  ::Union{Nothing, ReLUDualStateInfo}
+    # Incumbent value of the child epigraph variable θ̂_n used by the
+    # normalized dual objective `rhs - π₀ * θ̂_n`.
+    incumbent_theta     ::Union{Nothing, T}
+    # Incumbent node primal value Q_n(x̂), used for initialization, scaling,
+    # and post-generation validity checks.
+    primal_bound        ::Union{Nothing, T}
+end
+
+mutable struct ReLUCutInfoUC{T}
+    rhs                 ::T
+    dualInfo            ::ReLUDualStateInfo
 end

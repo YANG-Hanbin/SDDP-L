@@ -89,12 +89,12 @@ function solve_inner_minimization_problem(
             ),
         )
     elseif param.algorithm == :SDDiP
-        # SDDiP: binary 表示的状态差值
+        # SDDiP: use the lifted binary-state representation.
         Dict{Symbol, Any}(
             :Lt => JuMP.value.(model[:Lc]) .- cutTypeInfo.CoreState.IntVarBinaries
         )
     else
-        # SDDP（或者其他默认情况）：只用 St
+        # SDDP and other default paths only use the native state vector.
         Dict{Symbol, Any}(
             :St => value.(model[:Sc]) .- cutTypeInfo.CoreState.IntVar
         )
@@ -304,12 +304,12 @@ function solve_inner_minimization_problem(
             ),
         )
     elseif param.algorithm == :SDDiP
-        # SDDiP: binary 表示的状态差值
+        # SDDiP: use the lifted binary-state representation.
         Dict{Symbol, Any}(
             :Lt => JuMP.value.(model[:Lc]) .- stateInfo.IntVarBinaries,
         )
     else
-        # SDDP（或者其他默认情况）：只用 St
+        # SDDP and other default paths only use the native state vector.
         Dict{Symbol, Any}(
             :St => value.(model[:Sc]) .- stateInfo.IntVar,
         )
@@ -517,13 +517,13 @@ function solve_inner_minimization_problem(
             ),
         )
     elseif param.algorithm == :SDDiP
-        # SDDiP: binary 表示的状态差值
+        # SDDiP: use the lifted binary-state representation.
         Dict{Symbol, Any}(
             :obj => value(model[:primal_objective_expression]) - cutTypeInfo.primal_bound,
             :Lt => JuMP.value.(model[:Lc]) .- stateInfo.IntVarBinaries
         )
     elseif param.algorithm == :SDDP
-        # SDDP（或者其他默认情况）：只用 St
+        # SDDP and other default paths only use the native state vector.
         Dict{Symbol, Any}(
             :obj => value(model[:primal_objective_expression]) - cutTypeInfo.primal_bound,
             :St => value.(model[:Sc]) .- stateInfo.IntVar
@@ -558,7 +558,7 @@ function solve_inner_minimization_problem(
         - F,
         Dict(
             1 => normalization_function - 1.0, 
-            2 => πₙ.StateValue),
+            2 => πₙ.StateValue + cutTypeInfo.min_scale),
         d_obj,
         Dict(
             1 => d_con, 
@@ -566,4 +566,222 @@ function solve_inner_minimization_problem(
         )
     );
     return (currentInfo = currentInfo, currentInfo_f = F)
-end   
+end
+
+"""
+    update_relu_dual_auxiliary_variables!(
+        model::Model,
+        stateInfo::StageInfo;
+        param::SDDPParam = param
+    )::Nothing
+
+Create (once) and refresh the auxiliary variables used by the ReLU-dual
+inner minimization problem for SDDP and SDDP-L.
+
+The auxiliary variables encode the decomposition
+`Sc - x̂ = w⁺ - w⁻` with `w⁺, w⁻ ≥ 0`, where
+
+- `w⁺ = max(Sc - x̂, 0)`,
+- `w⁻ = max(x̂ - Sc, 0)`.
+
+The binary selector `r` is used together with simple bound constraints so that
+the representation is exact on the bounded state domain.
+"""
+function update_relu_dual_auxiliary_variables!(
+    model::Model,
+    stateInfo::StageInfo;
+    param::SDDPParam = param
+)::Nothing
+    if param.algorithm != :SDDP && param.algorithm != :SDDPL
+        error("ReLU cut generation is only implemented for SDDP and SDDP-L.")
+    end
+
+    dim = length(stateInfo.IntVar)
+
+    if :ReLUDualWPlus ∉ keys(model.obj_dict)
+        @variable(model, ReLUDualWPlus[g = 1:dim] ≥ 0)
+        @variable(model, ReLUDualWMinus[g = 1:dim] ≥ 0)
+        @variable(model, ReLUDualR[g = 1:dim], Bin)
+    end
+
+    for key in (:ReLUDualDeviation, :ReLUDualPlusBound, :ReLUDualMinusBound)
+        if key ∈ keys(model.obj_dict)
+            delete(model, [model[key][g] for g in 1:dim])
+            unregister(model, key)
+        end
+    end
+
+    @constraint(
+        model,
+        ReLUDualDeviation[g = 1:dim],
+        model[:ReLUDualWPlus][g] - model[:ReLUDualWMinus][g] ==
+        model[:Sc][g] - stateInfo.IntVar[g],
+    )
+    @constraint(
+        model,
+        ReLUDualPlusBound[g = 1:dim],
+        model[:ReLUDualWPlus][g] ≤
+        (upper_bound(model[:Sc][g]) - stateInfo.IntVar[g]) * model[:ReLUDualR][g],
+    )
+    @constraint(
+        model,
+        ReLUDualMinusBound[g = 1:dim],
+        model[:ReLUDualWMinus][g] ≤
+        stateInfo.IntVar[g] * (1 - model[:ReLUDualR][g]),
+    )
+
+    return
+end
+
+"""
+    function solve_inner_minimization_problem(
+        cutTypeInfo::ReLULagrangianCutGenerationProgram,
+        model::Model,
+        πₙ::ReLUDualStageInfo,
+        stateInfo::StageInfo
+    )
+
+Solve the regular ReLU-dual inner minimization problem for the SDDP benchmark.
+
+# Arguments
+
+    1. `cutTypeInfo::ReLULagrangianCutGenerationProgram`:
+       the information of the ReLU cut generation program
+    2. `model::Model`:
+       the backward model
+    3. `πₙ::ReLUDualStageInfo`:
+       the current ReLU-dual iterate
+    4. `stateInfo::StageInfo`:
+       the incumbent previous-stage state
+
+# Returns
+
+    1. `currentInfo::ReLUCurrentInfo`:
+       the oracle information used by the level-set method
+"""
+function solve_inner_minimization_problem(
+    cutTypeInfo::ReLULagrangianCutGenerationProgram,
+    model::Model,
+    πₙ::ReLUDualStageInfo,
+    stateInfo::StageInfo;
+    param::SDDPParam = param
+)
+    update_relu_dual_auxiliary_variables!(
+        model,
+        stateInfo;
+        param = param,
+    )
+
+    @objective(
+        model,
+        Min,
+        model[:primal_objective_expression] +
+        πₙ.IntVarPlus' * model[:ReLUDualWPlus] +
+        πₙ.IntVarMinus' * model[:ReLUDualWMinus] +
+        relu_lifted_leaf_lagrangian_term(πₙ, model, stateInfo),
+    )
+    optimize!(model)
+    F = JuMP.objective_value(model)
+
+    dim = length(stateInfo.IntVar)
+    currentInfo = ReLUCurrentInfo(
+        πₙ,
+        -F,
+        Dict(1 => 0.0),
+        Dict{Symbol, Any}(
+            :plus => -JuMP.value.(model[:ReLUDualWPlus]),
+            :minus => -JuMP.value.(model[:ReLUDualWMinus]),
+            :leaf => relu_lifted_leaf_value_gradient(model, stateInfo),
+        ),
+        Dict(
+            1 => Dict{Symbol, Any}(
+                :plus => zeros(dim),
+                :minus => zeros(dim),
+                :leaf => zero_relu_lifted_leaf_gradient(stateInfo),
+            ),
+        ),
+    )
+
+    return (currentInfo = currentInfo, currentInfo_f = F)
+end
+
+"""
+    function solve_inner_minimization_problem(
+        cutTypeInfo::NormalizedReLULagrangianCutGenerationProgram,
+        model::Model,
+        πₙ::ReLUDualStageInfo,
+        stateInfo::StageInfo
+    )
+
+Solve the normalized ReLU-dual inner minimization problem for the SDDP benchmark.
+
+# Arguments
+
+    1. `cutTypeInfo::NormalizedReLULagrangianCutGenerationProgram`:
+       the information of the normalized ReLU cut generation program
+    2. `model::Model`:
+       the backward model
+    3. `πₙ::ReLUDualStageInfo`:
+       the current normalized ReLU-dual iterate
+    4. `stateInfo::StageInfo`:
+       the incumbent previous-stage state
+
+# Returns
+
+    1. `currentInfo::ReLUCurrentInfo`:
+       the oracle information used by the level-set method
+"""
+function solve_inner_minimization_problem(
+    cutTypeInfo::NormalizedReLULagrangianCutGenerationProgram,
+    model::Model,
+    πₙ::ReLUDualStageInfo,
+    stateInfo::StageInfo;
+    param::SDDPParam = param
+)
+    update_relu_dual_auxiliary_variables!(
+        model,
+        stateInfo;
+        param = param,
+    )
+
+    @objective(
+        model,
+        Min,
+        πₙ.StateValue * model[:primal_objective_expression] +
+        πₙ.IntVarPlus' * model[:ReLUDualWPlus] +
+        πₙ.IntVarMinus' * model[:ReLUDualWMinus] +
+        relu_lifted_leaf_lagrangian_term(πₙ, model, stateInfo),
+    )
+    optimize!(model)
+    F = JuMP.objective_value(model)
+
+    normalization_function =
+        cutTypeInfo.NormalizationInfo.StateValue * πₙ.StateValue +
+        cutTypeInfo.NormalizationInfo.IntVarPlus' * πₙ.IntVarPlus +
+        cutTypeInfo.NormalizationInfo.IntVarMinus' * πₙ.IntVarMinus +
+        relu_lifted_leaf_dot(cutTypeInfo.NormalizationInfo, πₙ)
+
+    currentInfo = ReLUCurrentInfo(
+        πₙ,
+        # The normalized dual maximizes rhs - π₀ * θ̂_n, not rhs - π₀ * Q_n(x̂).
+        -F + πₙ.StateValue * cutTypeInfo.incumbent_theta,
+        Dict(1 => normalization_function - 1.0),
+        Dict{Symbol, Any}(
+            :plus => -JuMP.value.(model[:ReLUDualWPlus]),
+            :minus => -JuMP.value.(model[:ReLUDualWMinus]),
+            :leaf => relu_lifted_leaf_value_gradient(model, stateInfo),
+            :pi0 => cutTypeInfo.incumbent_theta -
+                    JuMP.value(model[:primal_objective_expression]),
+        ),
+        Dict(
+            1 => Dict{Symbol, Any}(
+                :plus => cutTypeInfo.NormalizationInfo.IntVarPlus,
+                :minus => cutTypeInfo.NormalizationInfo.IntVarMinus,
+                :leaf => cutTypeInfo.NormalizationInfo.IntVarLeaf,
+                :pi0 => cutTypeInfo.NormalizationInfo.StateValue,
+            ),
+        ),
+    )
+
+    return (currentInfo = currentInfo, currentInfo_f = F)
+end

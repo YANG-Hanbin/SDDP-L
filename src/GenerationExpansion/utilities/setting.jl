@@ -196,8 +196,8 @@ function SampleScenarios(
 
         # sample a node for each subsequent stage
         for t in 2:T
-            nodes   = collect(keys(Ω[t]))
-            weights = Weights(probList[t])
+            nodes   = sort(collect(keys(Ω[t])))
+            weights = Weights([probList[t][node] for node in nodes])
             path[t] = sample(nodes, weights)
         end
 
@@ -364,7 +364,7 @@ Print the header/bar for iteration information.
 """
 function print_iteration_info_bar()::Nothing
     println("------------------------------------------------- Iteration Info ------------------------------------------------")
-    println("Iter |        LB        |        UB        |       Gap      |      i-time     |    #D.     |     T-Time")
+    println("Iter |        LB        |        UB        |       Gap      |      i-time     |    #LM     |     T-Time")
     println("-----------------------------------------------------------------------------------------------------------------")
     return
 end
@@ -373,35 +373,6 @@ end
 ################################################################################
 ###############################  Logging / saving  #############################
 ################################################################################
-
-"""
-Save SDDP/SDDiP results to disk if `logger_save` is true.
-
-The file name encodes `(T, num, algorithm, cutSelection, tightness)`.
-"""
-# function save_info(
-#     param::SDDPParam,
-#     sddpResults::Dict;
-#     logger_save::Bool = true,
-# )::Nothing
-#     if !logger_save
-#         return
-#     end
-
-#     cutSelection = param.cutSelection
-#     num          = param.num
-#     T            = param.T
-#     tightness    = param.tightness
-#     algorithm    = param.algorithm
-
-#     filedir = "/Users/aaron/SDDiP_with_EnhancedCut/src/GenerationExpansion/new_logger/Periods$(T)-Real$(num)/"
-#     filename = "$algorithm-$cutSelection-$tightness.jld2"
-#     filepath = filedir * filename
-
-#     save(filepath, "sddpResults", sddpResults)
-#     return
-# end
-
 
 ################################################################################
 ###############################  Parameter setup  ##############################
@@ -417,6 +388,7 @@ function param_setup(;
     timeSDDP::Real           = 3600.0,
     gapSDDP::Float64         = 1e-3,
     iterSDDP::Int            = 100,
+    levelMethodMaxIter::Int  = 200,
     sample_size_SDDP::Int    = 5,
     solverGap:: Float64      = 1e-4,
     solverTime:: Float64     = 10.0,
@@ -435,11 +407,18 @@ function param_setup(;
     nxt_bound::Float64       = 1e8,
     logger_save::Bool        = true,
     algorithm::Symbol        = :SDDiP,
+    corePointStrategy::Symbol = :Mid,
+    corePointWeight::Float64  = 0.75,
+    corePointEpsilon::Float64 = 1e-2,
+    lncMinScale::Float64     = 1e-3,
+    lncCoreThetaMargin::Float64 = 1e-4,
+    cutDiagnostics::Bool     = false,
 )::SDDPParam
     return SDDPParam(
         float(timeSDDP),
         gapSDDP,
         iterSDDP,
+        levelMethodMaxIter,
         solverGap,
         solverTime,
         sample_size_SDDP,
@@ -458,6 +437,12 @@ function param_setup(;
         nxt_bound,
         logger_save,
         algorithm,
+        corePointStrategy,
+        corePointWeight,
+        corePointEpsilon,
+        lncMinScale,
+        lncCoreThetaMargin,
+        cutDiagnostics,
     )
 end
 

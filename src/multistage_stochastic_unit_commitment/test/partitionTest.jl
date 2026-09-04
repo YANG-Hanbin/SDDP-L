@@ -1,4 +1,4 @@
-cd("/Users/aaron/SDDiP_with_EnhancedCut/src/multistage_stochastic_unit_commitment/test")  # 改变当前工作目录到脚本所在的目录
+cd(@__DIR__)
 include(joinpath(@__DIR__, "loadMod.jl"))
 
 if abspath(PROGRAM_FILE) == @__FILE__
@@ -6,7 +6,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
         summary = run_experiment_grid(
             case         = "case30",
             algorithms   = [:SDDPL],
-            cuts         = [:LC, :NormalizedCut, :PLC, :SMC],
+            cuts         = [:LC, :LNC, :PLC, :SMC],
             nums         = [5, 10],
             Ts           = [6, 8, 12],
             numScenarios = 500,

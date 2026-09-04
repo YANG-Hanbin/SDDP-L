@@ -1,0 +1,35 @@
+# Operating-system and editor files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+.ipynb_checkpoints/
+
+# Julia-generated files
+*.jl.cov
+*.jl.*.cov
+*.ji
+.CondaPkg/
+.JuliaFormatter.toml.bak
+
+# Experiment outputs
+/src/results/
+/src/GenerationExpansion/logger/
+/src/GenerationExpansion/new_logger/
+/src/multistage_stochastic_unit_commitment/results/
+/src/GenerationExpansion/test/time_results/
+/src/multistage_stochastic_unit_commitment/test/time_results/
+/results_summary*.csv
+**/core_point_summary_*.csv
+
+# Logs and LaTeX build products
+*.log
+.texpadtmp/
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex.gz

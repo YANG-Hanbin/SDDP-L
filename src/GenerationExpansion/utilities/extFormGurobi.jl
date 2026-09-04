@@ -81,7 +81,7 @@ function gurobiOptimize!(
     @variable(model, S[i = 1:d, t = 1:T, ω in 1:W] ≥ 0)
 
     @constraint(model, [t in 1:T, ω in 1:W], S[:, t, ω] .== sum(x[:, j, ω] for j in 1:t ) )
-    @constraint(model, [t in 1:T], S[:, t, :] .≤ stageDataList[t].ū)
+    @constraint(model, [t in 1:T], S[:, t, :] .≤ stageDataList[t].ū)
     @constraint(model, [t in 1:T, ω in 1:W], y[:,t, ω] .≤ stageDataList[t].h * stageDataList[t].N * (S[:, t, ω] + stageDataList[t].s₀))
 
     ## nonanticipativity for multistage problem 

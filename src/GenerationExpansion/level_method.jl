@@ -112,10 +112,10 @@ Add linearization constraints for f and g_k at the current point.
     * `currentInfo.var`                – struct with fields:
         - `IntVar`       – state vector xⱼ (for SDDP/SDDPL)
         - `IntVarLeaf`   – nested dict for surrogate vars
-        - `IntVarBinaries` – binary state (for SDDiP, 不在这里用)
+        - `IntVarBinaries` – binary state (used only by the SDDiP path)
 
 - `model` :
-    * 已经有变量 `:x`, `:x_sur`, `:z`, `:y` 挂在 `model[:…]` 上
+    * variables `:x`, `:x_sur`, `:z`, and `:y` are already attached to `model`
 """
 function add_constraint(
     currentInfo::CurrentInfo,
@@ -152,7 +152,7 @@ function add_constraint(
     )
 
     # ---------- g_k(x) linearization ----------
-    # y ≥ g_k(xⱼ) + ∂g_k/∂St (x - xⱼ) + surrogate 部分
+    # y ≥ g_k(xⱼ) + ∂g_k/∂St (x - xⱼ) + surrogate contribution
     @constraint(
         model,
         [k = 1:m],
@@ -169,6 +169,168 @@ function add_constraint(
     )
 
     return
+end
+
+"""
+Add linearization constraints for the ReLU-dual bundle model.
+"""
+function add_constraint(
+    currentInfo::ReLUCurrentInfo,
+    model::Model,
+)::Nothing
+    x_plus = model[:x_plus]
+    x_minus = model[:x_minus]
+    πⱼ = currentInfo.var
+    leaf_obj_term = relu_leaf_bundle_term(
+        get(currentInfo.d_obj, :leaf, nothing),
+        model,
+        πⱼ.IntVarLeaf,
+    )
+
+    rhs = currentInfo.obj +
+          currentInfo.d_obj[:plus]' * (x_plus .- πⱼ.IntVarPlus) +
+          currentInfo.d_obj[:minus]' * (x_minus .- πⱼ.IntVarMinus) +
+          leaf_obj_term
+
+    if :x0 ∈ keys(model.obj_dict)
+        rhs += currentInfo.d_obj[:pi0] * (model[:x0] - πⱼ.StateValue)
+    end
+
+    @constraint(
+        model,
+        model[:z] ≥ rhs,
+    )
+
+    @constraint(
+        model,
+        [k in 1:length(currentInfo.con)],
+        model[:y] ≥ currentInfo.con[k] +
+        currentInfo.d_con[k][:plus]' * (x_plus .- πⱼ.IntVarPlus) +
+        currentInfo.d_con[k][:minus]' * (x_minus .- πⱼ.IntVarMinus) +
+        relu_leaf_bundle_term(
+            get(currentInfo.d_con[k], :leaf, nothing),
+            model,
+            πⱼ.IntVarLeaf,
+        ) +
+        (:x0 ∈ keys(model.obj_dict) ?
+            currentInfo.d_con[k][:pi0] * (model[:x0] - πⱼ.StateValue) :
+            0.0),
+    )
+
+    return
+end
+
+function relu_leaf_bundle_term(
+    gradient,
+    model::Model,
+    center,
+)
+    if gradient === nothing || center === nothing || :x_leaf ∉ keys(model.obj_dict)
+        return 0.0
+    end
+
+    return sum(
+        sum(
+            gradient[g][k] * (model[:x_leaf][g, k] - center[g][k])
+            for k in keys(gradient[g]);
+            init = 0.0,
+        )
+        for g in keys(gradient);
+        init = 0.0,
+    )
+end
+
+"""
+    relu_dual_bound_value(cutTypeInfo)
+
+Return the symmetric box bound used for the ReLU-dual variables in the
+bundle models. It uses `dual_var_bound_scale * (scenario_objective -
+lower_bound)`, with lower bound `0.0` for the generation-expansion
+subproblems.
+"""
+function relu_dual_bound_value(
+    cutTypeInfo::ReLULagrangianCutGenerationProgram,
+)::Float64
+    return RELU_DUAL_VAR_BOUND_SCALE * max(cutTypeInfo.primal_bound, 1.0)
+end
+
+function relu_dual_bound_value(
+    cutTypeInfo::NormalizedReLULagrangianCutGenerationProgram,
+)::Float64
+    return RELU_DUAL_VAR_BOUND_SCALE * max(cutTypeInfo.primal_bound, 1.0)
+end
+
+"""
+    add_normalized_relu_feasibility_region!(model, cutTypeInfo)
+
+Add the exact normalization constraint used by the normalized ReLU dual. The
+constraint is linear, so it can be enforced explicitly and exactly.
+"""
+function add_normalized_relu_feasibility_region!(
+    model::Model,
+    cutTypeInfo::NormalizedReLULagrangianCutGenerationProgram,
+)::Nothing
+    leaf_term =
+        cutTypeInfo.NormalizationInfo.IntVarLeaf === nothing ||
+        :x_leaf ∉ keys(model.obj_dict) ?
+        0.0 :
+        sum(
+            sum(
+                cutTypeInfo.NormalizationInfo.IntVarLeaf[g][k] *
+                model[:x_leaf][g, k]
+                for k in keys(cutTypeInfo.NormalizationInfo.IntVarLeaf[g]);
+                init = 0.0,
+            )
+            for g in keys(cutTypeInfo.NormalizationInfo.IntVarLeaf);
+            init = 0.0,
+        )
+
+    @constraint(
+        model,
+        relu_normalization_constraint,
+        cutTypeInfo.NormalizationInfo.IntVarPlus' * model[:x_plus] +
+        cutTypeInfo.NormalizationInfo.IntVarMinus' * model[:x_minus] +
+        cutTypeInfo.NormalizationInfo.StateValue * model[:x0] +
+        leaf_term ≤ 1.0,
+    )
+    return
+end
+
+"""
+    relu_gradient_statistics(gradientInfo::Dict{Symbol, Any})::NamedTuple
+
+Return compact infinity-norm summaries of the ReLU objective/constraint
+subgradients for verbose tracing.
+"""
+function relu_gradient_statistics(
+    gradientInfo::Dict{Symbol, Any},
+)::NamedTuple
+    plus_inf = maximum(abs.(gradientInfo[:plus]))
+    minus_inf = maximum(abs.(gradientInfo[:minus]))
+    pi0 = :pi0 ∈ keys(gradientInfo) ? gradientInfo[:pi0] : 0.0
+    return (plus_inf = plus_inf, minus_inf = minus_inf, pi0 = pi0)
+end
+
+"""
+    relu_dual_lower_bound(cutInfo, cutTypeInfo)
+
+Return the dual lower-bound value associated with the incumbent ReLU cut.
+
+- Regular ReLU: the cut right-hand side equals the dual objective value.
+- Normalized ReLU: the dual objective is `rhs - π₀ * θ̂`.
+"""
+function relu_dual_lower_bound(
+    cutInfo::ReLUCutInfo,
+    cutTypeInfo::ReLULagrangianCutGenerationProgram,
+)::Float64
+    return cutInfo.rhs
+end
+
+function relu_dual_lower_bound(
+    cutInfo::ReLUCutInfo,
+    cutTypeInfo::NormalizedReLULagrangianCutGenerationProgram,
+)::Float64
+    return cutInfo.rhs - cutInfo.dualInfo.StateValue * cutTypeInfo.incumbent_theta
 end
 
 ####################################################################################################
@@ -301,7 +463,7 @@ function LevelSetMethod_optimization!(
         if st == MOI.OPTIMAL || st == MOI.LOCALLY_SOLVED
             f_star = objective_value(oracleModel)
         else
-            return cutInfo
+            return (cutInfo = cutInfo, iter = iter)
         end
 
         # --- Level-set Δ model: compute Δ, α_min, α_max ---
@@ -356,10 +518,7 @@ function LevelSetMethod_optimization!(
             α = (a_min + a_max) / 2
         else
             ratio = (α - a_min) / denom
-            if μ / 2 ≤ ratio && ratio ≤ 1 - μ / 2
-                # keep α
-                α = α
-            else
+            if !(μ / 2 ≤ ratio ≤ 1 - μ / 2)
                 α = (a_min + a_max) / 2
             end
         end
@@ -405,7 +564,7 @@ function LevelSetMethod_optimization!(
         add_constraint(currentInfo, nxtModel)
 
         # --- proximity objective: stay close to x₀ ---
-        # base term: always IntVar distance (if存在)
+        # Base term: distance in the original state space whenever it exists.
         obj_expr = x₀.IntVar === nothing ?
             zero(A[1, 1]) :                       # some 0.0 scalar
             sum((nxtModel[:x] .- x₀.IntVar).^2)
@@ -451,12 +610,12 @@ function LevelSetMethod_optimization!(
             λₖ = abs(dual(level_constraint))
             μₖ = λₖ + 1
         else
-            return cutInfo
+            return (cutInfo = cutInfo, iter = iter)
         end
 
         # --- stopping rule ---
         if Δ ≤ abs(cutGenerationParamInfo.stateInfo.StateValue) * threshold || iter > iterBM
-            return cutInfo
+            return (cutInfo = cutInfo, iter = iter)
         end
 
         ############################################
@@ -481,6 +640,283 @@ end
 function LevelSetMethod_optimization!(
     stageModel::StageModel,
     cutGenerationParamInfo::CutGenerationParamInfo,
+    cutTypeInfo::Union{
+        ReLULagrangianCutGenerationProgram,
+        NormalizedReLULagrangianCutGenerationProgram,
+    };
+    stageData::StageData = stageData,
+    binaryInfo::BinaryInfo = binaryInfo,
+    param::SDDPParam = param,
+)::Any
+
+    μ          = cutGenerationParamInfo.μ
+    threshold  = cutGenerationParamInfo.gapBM
+    iterBM     = cutGenerationParamInfo.iterBM
+    stateInfo  = cutGenerationParamInfo.stateInfo
+
+    normalized = cutTypeInfo isa NormalizedReLULagrangianCutGenerationProgram
+    dual_bound_value = relu_dual_bound_value(cutTypeInfo)
+    z_lower_bound = normalized ? NORMALIZED_RELU_DUAL_OBJECTIVE_BOUND : param.nxt_bound
+
+    iter = 1
+    α    = 0.5
+    Δ    = Inf
+    τₖ   = 1.0
+    τₘ   = 0.5
+    μₖ   = 1.0
+
+    πₙ = cutGenerationParamInfo.πₙ
+    currentInfo, currentInfo_f = solve_inner_minimization_problem(
+        cutTypeInfo,
+        stageModel.model,
+        πₙ,
+        stateInfo;
+        param = param,
+    )
+
+    cutInfo = ReLUCutInfo(
+        relu_cut_rhs(currentInfo_f, currentInfo.var, stateInfo),
+        currentInfo.var,
+    )
+    best_dual_lower_bound = -currentInfo.obj
+
+    functionHistory = FunctionHistory(
+        Dict(1 => currentInfo.obj),
+        Dict(1 => maximum(currentInfo.con[k] for k in keys(currentInfo.con))),
+    )
+
+    oracleModel = Model(
+        optimizer_with_attributes(
+            () -> Gurobi.Optimizer(GRB_ENV)
+        ),
+    )
+    MOI.set(oracleModel, MOI.Silent(), !param.verbose)
+    set_optimizer_attribute(oracleModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(oracleModel, "Threads", 1)
+    set_optimizer_attribute(oracleModel, "TimeLimit", param.timeSDDP)
+
+    @variable(oracleModel, z ≥ -z_lower_bound)
+    @variable(oracleModel, -dual_bound_value ≤ x_plus[i = 1:length(stateInfo.IntVar)] ≤ dual_bound_value)
+    @variable(oracleModel, -dual_bound_value ≤ x_minus[i = 1:length(stateInfo.IntVar)] ≤ dual_bound_value)
+    if stateInfo.IntVarLeaf !== nothing
+        @variable(
+            oracleModel,
+            -dual_bound_value ≤
+            x_leaf[g in keys(stateInfo.IntVarLeaf), k in keys(stateInfo.IntVarLeaf[g])] ≤
+            dual_bound_value,
+        )
+    end
+    if normalized
+        @variable(oracleModel, 0.0 ≤ x0 ≤ RELU_DUAL_N0_BOUND)
+    end
+    @variable(oracleModel, y ≤ 0)
+    @objective(oracleModel, Min, z)
+    if normalized
+        add_normalized_relu_feasibility_region!(oracleModel, cutTypeInfo)
+    end
+
+    nxtModel = Model(
+        optimizer_with_attributes(
+            () -> Gurobi.Optimizer(GRB_ENV)
+        ),
+    )
+    MOI.set(nxtModel, MOI.Silent(), !param.verbose)
+    set_optimizer_attribute(nxtModel, "MIPGap", param.gapSDDP)
+    set_optimizer_attribute(nxtModel, "Threads", 1)
+    set_optimizer_attribute(nxtModel, "TimeLimit", param.timeSDDP)
+
+    @variable(nxtModel, z ≥ -z_lower_bound)
+    @variable(nxtModel, -dual_bound_value ≤ x_plus[i = 1:length(stateInfo.IntVar)] ≤ dual_bound_value)
+    @variable(nxtModel, -dual_bound_value ≤ x_minus[i = 1:length(stateInfo.IntVar)] ≤ dual_bound_value)
+    if stateInfo.IntVarLeaf !== nothing
+        @variable(
+            nxtModel,
+            -dual_bound_value ≤
+            x_leaf[g in keys(stateInfo.IntVarLeaf), k in keys(stateInfo.IntVarLeaf[g])] ≤
+            dual_bound_value,
+        )
+    end
+    if normalized
+        @variable(nxtModel, 0.0 ≤ x0 ≤ RELU_DUAL_N0_BOUND)
+    end
+    @variable(nxtModel, y ≤ 0)
+    @objective(nxtModel, Min, z)
+    if normalized
+        add_normalized_relu_feasibility_region!(nxtModel, cutTypeInfo)
+    end
+
+    while true
+        add_constraint(currentInfo, oracleModel)
+        optimize!(oracleModel)
+        st = termination_status(oracleModel)
+
+        if st == MOI.OPTIMAL || st == MOI.LOCALLY_SOLVED
+            f_star = objective_value(oracleModel)
+        else
+            return (cutInfo = cutInfo, iter = iter)
+        end
+
+        result    = Δ_model_formulation(functionHistory, f_star, iter)
+        previousΔ = Δ
+        Δ         = result[1]
+        a_min     = result[2]
+        a_max     = result[3]
+
+        if param.verbose
+            if iter == 1
+                println("-------------- Level-set Iteration Info --------------")
+                println("Iter |   Gap               Objective                Constraint")
+            end
+            @printf(
+                "%3d  |   %5.3g           %5.3g                 %5.3g\n",
+                iter,
+                Δ,
+                -currentInfo.obj,
+                maximum(values(currentInfo.con)),
+            )
+
+            obj_grad_info = relu_gradient_statistics(currentInfo.d_obj)
+            con_grad_info = relu_gradient_statistics(currentInfo.d_con[1])
+            @printf(
+                "      grad-f: |plus|∞ = %9.3g, |minus|∞ = %9.3g, pi0 = %9.3g\n",
+                obj_grad_info.plus_inf,
+                obj_grad_info.minus_inf,
+                obj_grad_info.pi0,
+            )
+            @printf(
+                "      grad-g: |plus|∞ = %9.3g, |minus|∞ = %9.3g, pi0 = %9.3g\n",
+                con_grad_info.plus_inf,
+                con_grad_info.minus_inf,
+                con_grad_info.pi0,
+            )
+        end
+
+        x₀ = currentInfo.var
+        if round(previousΔ; digits = 8) > round(Δ; digits = 8)
+            τₖ = μₖ * τₖ
+        else
+            τₖ = (τₖ + τₘ) / 2
+        end
+
+        current_dual_lower_bound = -currentInfo.obj
+        if current_dual_lower_bound ≥ best_dual_lower_bound - 1e-10
+            best_dual_lower_bound = current_dual_lower_bound
+            cutInfo = ReLUCutInfo(
+                relu_cut_rhs(currentInfo_f, currentInfo.var, stateInfo),
+                currentInfo.var,
+            )
+        end
+
+        denom = a_max - a_min
+        if denom ≈ 0.0
+            α = (a_min + a_max) / 2
+        else
+            ratio = (α - a_min) / denom
+            if !(μ / 2 ≤ ratio ≤ 1 - μ / 2)
+                α = (a_min + a_max) / 2
+            end
+        end
+
+        w = α * f_star
+        W = minimum(
+            α * functionHistory.obj_history[j] +
+            (1 - α) * functionHistory.max_con_history[j] for j in 1:iter
+        )
+
+        λ = iter ≤ 10 ? 0.05 : 0.1
+        λ = iter ≥ 20 ? 0.2 : λ
+        λ = iter ≥ 40 ? 0.3 : λ
+        λ = iter ≥ 50 ? 0.4 : λ
+        λ = iter ≥ 60 ? 0.5 : λ
+        λ = iter ≥ 70 ? 0.6 : λ
+        λ = iter ≥ 80 ? 0.7 : λ
+        λ = iter ≥ 90 ? 0.8 : λ
+
+        level = w + λ * (W - w)
+
+        if iter == 1
+            @constraint(
+                nxtModel,
+                level_constraint,
+                α * nxtModel[:z] + (1 - α) * nxtModel[:y] ≤ level,
+            )
+        else
+            delete(nxtModel, nxtModel[:level_constraint])
+            unregister(nxtModel, :level_constraint)
+            @constraint(
+                nxtModel,
+                level_constraint,
+                α * nxtModel[:z] + (1 - α) * nxtModel[:y] ≤ level,
+            )
+        end
+
+        add_constraint(currentInfo, nxtModel)
+
+        obj_expr =
+            sum((nxtModel[:x_plus] .- x₀.IntVarPlus).^2) +
+            sum((nxtModel[:x_minus] .- x₀.IntVarMinus).^2)
+        if x₀.IntVarLeaf !== nothing
+            obj_expr += sum(
+                sum(
+                    (nxtModel[:x_leaf][g, k] - x₀.IntVarLeaf[g][k])^2
+                    for k in keys(x₀.IntVarLeaf[g]);
+                    init = 0.0,
+                )
+                for g in keys(x₀.IntVarLeaf);
+                init = 0.0,
+            )
+        end
+        if normalized
+            obj_expr += (nxtModel[:x0] - x₀.StateValue)^2
+        end
+
+        @objective(nxtModel, Min, obj_expr)
+        optimize!(nxtModel)
+        st = termination_status(nxtModel)
+
+        if st == MOI.OPTIMAL || st == MOI.LOCALLY_SOLVED
+            πₙ = ReLUDualStageInfo(
+                normalized ? JuMP.value(nxtModel[:x0]) : nothing,
+                JuMP.value.(nxtModel[:x_plus]),
+                JuMP.value.(nxtModel[:x_minus]),
+                x₀.IntVarLeaf === nothing ?
+                    nothing :
+                    Dict(
+                        g => Dict(
+                            k => JuMP.value(nxtModel[:x_leaf][g, k])
+                            for k in keys(x₀.IntVarLeaf[g])
+                        ) for g in keys(x₀.IntVarLeaf)
+                    ),
+            )
+            λₖ = abs(dual(level_constraint))
+            μₖ = λₖ + 1
+        else
+            return (cutInfo = cutInfo, iter = iter)
+        end
+
+        dual_gap_scale = max(abs(best_dual_lower_bound), 1.0)
+        if Δ ≤ dual_gap_scale * threshold || iter >= iterBM
+            return (cutInfo = cutInfo, iter = iter)
+        end
+
+        currentInfo, currentInfo_f = solve_inner_minimization_problem(
+            cutTypeInfo,
+            stageModel.model,
+            πₙ,
+            stateInfo;
+            param = param,
+        )
+
+        iter += 1
+        functionHistory.obj_history[iter] = currentInfo.obj
+        functionHistory.max_con_history[iter] =
+            maximum(currentInfo.con[k] for k in keys(currentInfo.con))
+    end
+end
+
+function LevelSetMethod_optimization!(
+    stageModel::StageModel,
+    cutGenerationParamInfo::CutGenerationParamInfo,
     cutTypeInfo::StrengthenedBendersCutGenerationProgram;
     stageData::StageData = stageData,
     binaryInfo::BinaryInfo = binaryInfo,
@@ -498,7 +934,8 @@ function LevelSetMethod_optimization!(
         param = param,
     )
 
-    return [
+    return (
+        cutInfo = [
         currentInfo_f -
         (param.algorithm == :SDDiP ?
             currentInfo.var.IntVarBinaries' * stateInfo.IntVarBinaries : currentInfo.var.IntVar' * stateInfo.IntVar
@@ -511,7 +948,9 @@ function LevelSetMethod_optimization!(
                 ) for g in 1:binaryInfo.d
             ) : 0.0),
         currentInfo.var,
-    ]
+        ],
+        iter = 1,
+    )
 end
 
 
@@ -533,10 +972,10 @@ Add linearization constraints for f and g_k at the current point.
         - `StateValue`   – coeff vector θ  
         - `IntVar`       – coeff vector xⱼ (for SDDP/SDDPL)
         - `IntVarLeaf`   – nested dict for surrogate vars
-        - `IntVarBinaries` – binary coeff (for SDDiP, 不在这里用)
+        - `IntVarBinaries` – binary coefficient vector used by the SDDiP path
 
 - `model` :
-    * 已经有变量 `:x`, `:x_sur`, `:z`, `:y` 挂在 `model[:…]` 上
+    * variables `:x`, `:x_sur`, `:z`, and `:y` are already attached to `model`
 """
 function add_constraint!(
     currentInfo::CurrentInfo,
@@ -572,7 +1011,7 @@ function add_constraint!(
     )
 
     # ---------- g_k(x) linearization ----------
-    # y ≥ g_k(xⱼ) + ∂g_k/∂St (x - xⱼ) + surrogate 部分
+    # y ≥ g_k(xⱼ) + ∂g_k/∂St (x - xⱼ) + surrogate contribution
     @constraint(
         model,
         model[:y] ≥
@@ -637,21 +1076,26 @@ function LevelSetMethod_optimization!(
         param = param,
     )
 
-    # initial cut info: [constant term, "point" info]
-    cutInfo = [
-        currentInfo_f - currentInfo.var.StateValue * cutTypeInfo.primal_bound - 
-        (param.algorithm == :SDDiP ?
-            currentInfo.var.IntVarBinaries' * stateInfo.IntVarBinaries : currentInfo.var.IntVar' * stateInfo.IntVar
-        ) -
-        (param.algorithm == :SDDPL ?
-            sum(
+    function build_lnc_cut_info(currentInfo, currentInfo_f)
+        return [
+            currentInfo_f - currentInfo.var.StateValue * cutTypeInfo.primal_bound -
+            (param.algorithm == :SDDiP ?
+                currentInfo.var.IntVarBinaries' * stateInfo.IntVarBinaries :
+                currentInfo.var.IntVar' * stateInfo.IntVar
+            ) -
+            (param.algorithm == :SDDPL ?
                 sum(
-                    currentInfo.var.IntVarLeaf[g][k] * stateInfo.IntVarLeaf[g][k]
-                    for k in keys(stateInfo.IntVarLeaf[g])
-                ) for g in 1:binaryInfo.d
-            ) : 0.0),
-        currentInfo.var
-    ]
+                    sum(
+                        currentInfo.var.IntVarLeaf[g][k] * stateInfo.IntVarLeaf[g][k]
+                        for k in keys(stateInfo.IntVarLeaf[g])
+                    ) for g in 1:binaryInfo.d
+                ) : 0.0),
+            currentInfo.var,
+        ]
+    end
+
+    # initial cut info: [constant term, "point" info]
+    cutInfo = build_lnc_cut_info(currentInfo, currentInfo_f)
 
     # function history (f, max g_k) for level-set Δ model
     functionHistory = FunctionHistory(
@@ -673,7 +1117,7 @@ function LevelSetMethod_optimization!(
     set_optimizer_attribute(oracleModel, "TimeLimit", param.timeSDDP)
 
     @variable(oracleModel, z ≥ -param.nxt_bound)
-    @variable(oracleModel, xθ)
+    @variable(oracleModel, xθ <= -cutTypeInfo.min_scale)
     if param.algorithm == :SDDPL
         @variable(oracleModel, x[i = 1:d])
         @variable(oracleModel, x_sur[g in 1:d, k in keys(stateInfo.IntVarLeaf[g])])
@@ -699,7 +1143,7 @@ function LevelSetMethod_optimization!(
     set_optimizer_attribute(nxtModel, "TimeLimit", param.timeSDDP)
 
     @variable(nxtModel, z)
-    @variable(nxtModel, xθ)
+    @variable(nxtModel, xθ <= -cutTypeInfo.min_scale)
     if param.algorithm == :SDDPL
         @variable(nxtModel, x[i = 1:d])
         @variable(nxtModel, x_sur[g in 1:d, k in keys(stateInfo.IntVarLeaf[g])])
@@ -728,7 +1172,7 @@ function LevelSetMethod_optimization!(
         if st == MOI.OPTIMAL || st == MOI.LOCALLY_SOLVED
             f_star = objective_value(oracleModel)
         else
-            return cutInfo
+            return (cutInfo = cutInfo, iter = iter)
         end
 
         # --- Level-set Δ model: compute Δ, α_min, α_max ---
@@ -755,22 +1199,11 @@ function LevelSetMethod_optimization!(
 
         # --- update x₀ and cutInfo if Δ improved ---
         x₀ = currentInfo.var
-        if round(previousΔ; digits = 8) > round(Δ; digits = 8)
+        candidate_pi0 = -currentInfo.var.StateValue
+        if candidate_pi0 ≥ cutTypeInfo.min_scale &&
+           round(previousΔ; digits = 8) > round(Δ; digits = 8)
             τₖ  = μₖ * τₖ
-            cutInfo = [
-                currentInfo_f - currentInfo.var.StateValue * cutTypeInfo.primal_bound - 
-                (param.algorithm == :SDDiP ?
-                    currentInfo.var.IntVarBinaries' * stateInfo.IntVarBinaries : currentInfo.var.IntVar' * stateInfo.IntVar
-                ) -
-                (param.algorithm == :SDDPL ?
-                    sum(
-                        sum(
-                            currentInfo.var.IntVarLeaf[g][k] * stateInfo.IntVarLeaf[g][k]
-                            for k in keys(stateInfo.IntVarLeaf[g])
-                        ) for g in 1:binaryInfo.d
-                    ) : 0.0),
-                currentInfo.var
-            ]
+            cutInfo = build_lnc_cut_info(currentInfo, currentInfo_f)
         else
             τₖ = (τₖ + τₘ) / 2
         end
@@ -778,14 +1211,10 @@ function LevelSetMethod_optimization!(
         # --- update α ---
         denom = a_max - a_min
         if denom ≈ 0.0
-            # avoid numerical issues
             α = (a_min + a_max) / 2
         else
             ratio = (α - a_min) / denom
-            if μ / 2 ≤ ratio && ratio ≤ 1 - μ / 2
-                # keep α
-                α = α
-            else
+            if !(μ / 2 ≤ ratio ≤ 1 - μ / 2)
                 α = (a_min + a_max) / 2
             end
         end
@@ -831,7 +1260,7 @@ function LevelSetMethod_optimization!(
         add_constraint!(currentInfo, nxtModel)
 
         # --- proximity objective: stay close to x₀ ---
-        # base term: always IntVar distance (if存在)
+        # Base term: distance in the original state space whenever it exists.
         obj_expr = x₀.IntVar === nothing ?
             zero(A[1, 1]) :                       # some 0.0 scalar
             sum((nxtModel[:x] .- x₀.IntVar).^2)
@@ -853,7 +1282,7 @@ function LevelSetMethod_optimization!(
         @objective(nxtModel, Min, obj_expr + (nxtModel[:xθ] - x₀.StateValue)^2)
         optimize!(nxtModel)
         st = termination_status(nxtModel)
-                
+
         if st == MOI.OPTIMAL || st == MOI.LOCALLY_SOLVED
             πₙ = StageInfo(
                 JuMP.value(nxtModel[:xθ]),
@@ -876,12 +1305,12 @@ function LevelSetMethod_optimization!(
             λₖ = abs(dual(level_constraint))
             μₖ = λₖ + 1
         else
-            return cutInfo
+            return (cutInfo = cutInfo, iter = iter)
         end
 
         # --- stopping rule ---
         if Δ ≤ abs(cutGenerationParamInfo.stateInfo.StateValue) * threshold || iter > iterBM
-            return cutInfo
+            return (cutInfo = cutInfo, iter = iter)
         end
 
         ############################################

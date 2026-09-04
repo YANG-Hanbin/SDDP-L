@@ -1,9 +1,10 @@
-# using Base.Filesystem  # 引入 Filesystem 模块
-cd("/Users/aaron/SDDiP_with_EnhancedCut/src/multistage_stochastic_unit_commitment/test")  # 改变当前工作目录到脚本所在的目录
+cd(@__DIR__)
 include(joinpath(@__DIR__, "loadMod.jl"))
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    ## 用法示例：julia runTest.jl 1 20   # 跑第 1 到第 20 个组合
+    # Example usage:
+    #   julia runTest.jl 1 20
+    # to run configurations 1 through 20 only.
     # julia src/multistage_stochastic_unit_commitment/test/runTest.jl 1 50
     # julia src/multistage_stochastic_unit_commitment/test/runTest.jl 51 100
     # julia src/multistage_stochastic_unit_commitment/test/runTest.jl 101 144
@@ -38,5 +39,5 @@ if abspath(PROGRAM_FILE) == @__FILE__
     end
 
     @show summary
-    CSV.write(joinpath(project_root, outname), summary)
+    CSV.write(joinpath(PROJECT_ROOT, outname), summary)
 end
