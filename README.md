@@ -33,7 +33,8 @@ src/
     |-- utilities/            # data structures and helper routines
     `-- *.jl                  # forward/backward passes and cut generation
 experiments/
-`-- normalized_relu/          # normalized-ReLU batch drivers
+|-- normalized_relu/          # normalized-ReLU batch drivers
+`-- validation/               # bounded input/output and numerical checks
 ```
 
 ## Requirements
@@ -85,6 +86,20 @@ julia +1.11 --project=. \
 Both regression drivers use two SDDP-L iterations and disable result-file
 output by default.
 
+For broader validation of every supplied input and the supported algorithm/cut
+interfaces, run:
+
+```bash
+experiments/validation/run_all.sh
+```
+
+The two validation programs can also be run separately as `validate_gep.jl`
+and `validate_msuc.jl`. They check serialized-input integrity, public cut
+dispatch, numerical bounds, solution histories, runtime accounting, and
+adaptive-level execution. The full matrix is intentionally bounded but
+substantially longer than the compact regressions. Its CSV reports are written
+under the ignored `src/results/validation/` directory.
+
 The normalized-ReLU batch for both applications can be launched with:
 
 ```bash
@@ -102,6 +117,9 @@ experiments can be launched programmatically through
 `run_generation_expansion_experiments` and `run_experiment_grid` in the
 corresponding `loadMod.jl` files. Each loader starts five Julia worker
 processes.
+
+Global runtime budgets are checked between major forward and backward passes;
+individual optimization models also use the configured solver time limit.
 
 Generated solver output is written beneath `src/results/` or the application
 result directories. These directories are excluded from version control.

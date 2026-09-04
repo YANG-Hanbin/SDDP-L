@@ -1,13 +1,13 @@
 include(joinpath(@__DIR__, "loadMod.jl"))
 
 """
-    run_msuc_adaptive_cut_smoke_tests(; ...)
+    run_msuc_adaptive_cut_test(; ...)
 
 Run short SDDP-L checks for `AdaptivePLC` and `AdaptiveSMC` on the published
 case30, six-stage, five-realization fixture. Results are returned in a
 `DataFrame`; no experiment files are written.
 """
-function run_msuc_adaptive_cut_smoke_tests(;
+function run_msuc_adaptive_cut_test(;
     iterations::Int = 2,
     num_scenarios::Int = 2,
     level_method_iterations::Int = 4,
@@ -30,7 +30,7 @@ function run_msuc_adaptive_cut_smoke_tests(;
             M = 1,
             logger_save = false,
             terminate_time = 600,
-            terminate_threshold = -1.0,
+            terminate_threshold = 0.0,
             TimeLimit = 30,
             MIPGap = 1e-4,
             MaxIter = iterations,
@@ -55,6 +55,10 @@ function run_msuc_adaptive_cut_smoke_tests(;
     return DataFrame(rows)
 end
 
+# Backward-compatible name retained for existing experiment scripts.
+run_msuc_adaptive_cut_smoke_tests(; kwargs...) =
+    run_msuc_adaptive_cut_test(; kwargs...)
+
 if abspath(PROGRAM_FILE) == @__FILE__
-    display(run_msuc_adaptive_cut_smoke_tests())
+    display(run_msuc_adaptive_cut_test())
 end
