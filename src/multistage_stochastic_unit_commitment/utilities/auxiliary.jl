@@ -711,3 +711,12 @@ function get_cut_selection(cutSelection::Symbol, i::Int)
     end
     return cutSelection
 end
+
+is_pareto_lagrangian_cut(cutSelection::Symbol)::Bool =
+    cutSelection in (:PLC, :AdaptivePLC)
+
+is_square_minimization_cut(cutSelection::Symbol)::Bool =
+    cutSelection in (:SMC, :AdaptiveSMC)
+
+is_adaptive_level_cut(cutSelection::Symbol)::Bool =
+    cutSelection in (:AdaptivePLC, :AdaptiveSMC)

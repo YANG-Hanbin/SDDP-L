@@ -271,3 +271,15 @@ function get_cutType(
         return cutType
     end
 end
+
+"""Return whether `cutType` uses the Pareto Lagrangian oracle."""
+is_pareto_lagrangian_cut(cutType::Symbol)::Bool =
+    cutType in (:PLC, :AdaptivePLC)
+
+"""Return whether `cutType` uses the square-minimization oracle."""
+is_square_minimization_cut(cutType::Symbol)::Bool =
+    cutType in (:SMC, :AdaptiveSMC)
+
+"""Return whether `cutType` uses adaptive-level cut selection."""
+is_adaptive_level_cut(cutType::Symbol)::Bool =
+    cutType in (:AdaptivePLC, :AdaptiveSMC)

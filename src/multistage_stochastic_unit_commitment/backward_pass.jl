@@ -485,7 +485,9 @@ function backwardPass(
     (i, t, n, ω, cutSelection) = backwardNodeInfo;
     parentStateInfo = stateInfoCollection[i, t-1, ω]
     if param.algorithm == :SDDPL &&
-       (cutSelection == :ReLUC || cutSelection == :NormalizedReLUC)
+       (cutSelection == :ReLUC ||
+        cutSelection == :NormalizedReLUC ||
+        is_adaptive_level_cut(cutSelection))
         sync_cont_aug_state!(
             parentStateInfo,
             ModelList[t-1];
@@ -507,12 +509,12 @@ function backwardPass(
     incumbent_theta = nothing;
     normalizationInfo = nothing;
 
-    if cutSelection == :ReLUC || cutSelection == :NormalizedReLUC
-        # ReLU-based cut generation is scaled by the current node-specific
-        # primal value Q_n(x̂), not by the sampled forward-path value stored in
-        # `stateInfoCollection[i, t, ω].StateValue`. Solving the node primal
-        # problem here also provides a stable incumbent for the subsequent
-        # lifted ReLU oracle.
+    if cutSelection == :ReLUC ||
+       cutSelection == :NormalizedReLUC ||
+       is_adaptive_level_cut(cutSelection)
+        # ReLU and adaptive enhanced cuts use the current node-specific primal
+        # value Q_n(x̂), rather than the sampled forward-path value. For SDDP-L,
+        # `compute_node_primal_bound` also fixes the synchronized lifted state.
         node_primal_bound = compute_node_primal_bound(
             ModelList[t].model,
             parentStateInfo;
@@ -595,7 +597,7 @@ function backwardPass(
 
     lnc_anchor_value = NaN
 
-    if cutSelection == :PLC
+    if is_pareto_lagrangian_cut(cutSelection)
         CutGenerationInfo = ParetoLagrangianCutGeneration{Float64}(
             param_cut.core_point_strategy,
             setup_PLC_core_point(
@@ -606,7 +608,9 @@ function backwardPass(
                 param = param
             ), 
             param_cut.δ, 
-            stateInfoCollection[i, t, ω].StateValue
+            is_adaptive_level_cut(cutSelection) ?
+                node_primal_bound :
+                stateInfoCollection[i, t, ω].StateValue
         );
     elseif cutSelection == :LC
         CutGenerationInfo = LagrangianCutGeneration{Float64}(
@@ -628,10 +632,12 @@ function backwardPass(
             incumbent_theta,
             node_primal_bound,
         );
-    elseif cutSelection == :SMC
+    elseif is_square_minimization_cut(cutSelection)
         CutGenerationInfo = SquareMinimizationCutGeneration{Float64}(
             param_cut.δ, 
-            stateInfoCollection[i, t, ω].StateValue
+            is_adaptive_level_cut(cutSelection) ?
+                node_primal_bound :
+                stateInfoCollection[i, t, ω].StateValue
         );
     elseif cutSelection == :SBC
         CutGenerationInfo = StrengthenedBendersCutGeneration{Float64}();
@@ -745,6 +751,10 @@ function backwardPass(
         (λ₀, λ₁, πₙ₀) = cut_generation_result.cutInfo
         LMiter = cut_generation_result.iter
     end
+    adaptive_diagnostics =
+        :diagnostics in propertynames(cut_generation_result) ?
+        cut_generation_result.diagnostics :
+        nothing
     lnc_diagnostics = (
         scale = NaN,
         tightness_gap = NaN,
@@ -780,6 +790,22 @@ function backwardPass(
 
         if get(param, :cutDiagnostics, false)
             @info "LNC cut diagnostics" stage=t node=n sample=ω scale=scale tightness_gap=tightness_gap fallback=false core_theta_fallback=CutGenerationInfo.core_theta_fallback theta_anchor=CutGenerationInfo.theta_anchor core_theta=CutGenerationInfo.core_theta
+        end
+    end
+
+    if get(param, :cutDiagnostics, false) && is_adaptive_level_cut(cutSelection)
+        selected_cut_value = lnc_cut_value_at_state(
+            (λ₀, λ₁, πₙ₀),
+            parentStateInfo;
+            indexSets = indexSets,
+            param = param,
+        )
+        value_function = Float64(node_primal_bound)
+        if adaptive_diagnostics === nothing
+            @info "Adaptive enhanced cut tightness" cut=cutSelection stage=t node=n sample=ω cut_value_at_incumbent=selected_cut_value value_function=value_function value_gap=value_function-selected_cut_value
+        else
+            envelope_upper_bound = min(adaptive_diagnostics.D_upper, value_function)
+            @info "Adaptive enhanced cut tightness" cut=cutSelection stage=t node=n sample=ω cut_value_at_incumbent=selected_cut_value value_function=value_function envelope_lower_bound=adaptive_diagnostics.D_lower envelope_upper_bound=envelope_upper_bound certified_tightness_gap=max(0.0, envelope_upper_bound-selected_cut_value) selected_below_lower_bound=max(0.0, adaptive_diagnostics.D_lower-selected_cut_value) value_gap=value_function-selected_cut_value dual_bound_gap=adaptive_diagnostics.d_gap p_gap=adaptive_diagnostics.p_gap bundle_size=adaptive_diagnostics.bundle_size
         end
     end
 

@@ -26,6 +26,7 @@ end
 @everywhere begin
     include(joinpath(UC_SRC, "utilities", "structs.jl"))
     include(joinpath(UC_SRC, "utilities", "auxiliary.jl"))
+    include(joinpath(UC_SRC, "utilities", "adaptive_level_method.jl"))
     include(joinpath(UC_SRC, "utilities", "level_method_regular_subproblem.jl"))
     include(joinpath(UC_SRC, "utilities", "level_method_normalized_subproblem.jl"))
     include(joinpath(UC_SRC, "utilities", "cut_variants.jl"))

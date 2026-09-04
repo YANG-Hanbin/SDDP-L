@@ -565,7 +565,7 @@ function setupCutGenerationInfo(
             incumbent_theta,
             cutGenerationProgramInfo.NormalizationInfo,
         )
-    elseif cutType == :PLC
+    elseif is_pareto_lagrangian_cut(cutType)
         ## state / binary state constraint
         if param.algorithm == :SDDiP
             @constraint(
@@ -597,7 +597,7 @@ function setupCutGenerationInfo(
         end 
         delete(model, model[:NonAnticipativity])
         unregister(model, :NonAnticipativity)
-    elseif cutType == :SMC
+    elseif is_square_minimization_cut(cutType)
         ## state / binary state constraint
         if param.algorithm == :SDDiP
             @constraint(
@@ -744,10 +744,10 @@ function setupCutGenerationInfo(
         0.5,
         level_method_tolerance,
         param.levelMethodMaxIter,
-        1e8,
+        is_adaptive_level_cut(cutType) ? param.nxt_bound : 1e8,
         param.verbose,
         stateInfo,
-        param.cutType,
+        cutType,
         πₙ_init,
     )
 

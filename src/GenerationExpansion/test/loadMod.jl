@@ -29,6 +29,7 @@ const GEP_SRC = abspath(joinpath(@__DIR__, ".."))
     include(joinpath(GEP_SRC, "level_method.jl"))
     include(joinpath(GEP_SRC, "utilities", "setting.jl"))
     include(joinpath(GEP_SRC, "cut_variants.jl"))
+    include(joinpath(GEP_SRC, "adaptive_level_method.jl"))
     include(joinpath(GEP_SRC, "sddp.jl"))
 end
 
@@ -49,7 +50,7 @@ function run_generation_expansion_experiments(;
     # algorithm list: SDDP / SDDPL / SDDiP
     algorithms::Vector{Symbol} = [:SDDP, :SDDPL, :SDDiP],
 
-    # cut types: SMC / PLC / LC / ReLUC / NormalizedReLUC
+    # cut types: SMC / PLC / AdaptiveSMC / AdaptivePLC / LC / ReLUC / NormalizedReLUC
     cutTypes::Vector{Symbol}   = [:SMC, :PLC, :LC, :ReLUC, :NormalizedReLUC],
 
     # time horizon and number of scenarios

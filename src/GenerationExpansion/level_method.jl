@@ -346,6 +346,17 @@ function LevelSetMethod_optimization!(
     param::SDDPParam = param,
 )::Any
 
+    if is_adaptive_level_cut(cutGenerationParamInfo.cutSelection)
+        return gep_adaptive_level_method!(
+            stageModel,
+            cutGenerationParamInfo,
+            cutTypeInfo;
+            stageData = stageData,
+            binaryInfo = binaryInfo,
+            param = param,
+        )
+    end
+
     # unpack parameters (μ > 0 larger means more aggressive α adjustment)
     μ          = cutGenerationParamInfo.μ
     λ          = cutGenerationParamInfo.λ

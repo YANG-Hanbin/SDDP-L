@@ -386,7 +386,8 @@ function solve_inner_minimization_problem(
     model::Model, 
     πₙ::StateInfo, 
     stateInfo::StateInfo;
-    indexSets::IndexSets = indexSets
+    indexSets::IndexSets = indexSets,
+    param::NamedTuple = param
 )
     @objective(
         model, 

@@ -397,7 +397,10 @@ function stochastic_dual_dynamic_programming_algorithm(
             lifting_time = elapsed_seconds(lifting_timer);
         end
 
-        if param.algorithm == :SDDPL && (cut == :ReLUC || cut == :NormalizedReLUC)
+        if param.algorithm == :SDDPL &&
+           (cut == :ReLUC ||
+            cut == :NormalizedReLUC ||
+            is_adaptive_level_cut(cut))
             @everywhere begin
                 i_sync = $i
                 for t_sync in 1:(indexSets.T - 1)

@@ -24,7 +24,11 @@ function SetupLevelSetMethodOracleParam(
     threshold     = get(param_levelsetmethod, :threshold, nothing);
     nxt_bound     = get(param_levelsetmethod, :nxt_bound, 1e10);
     MaxIter       = get(param_levelsetmethod, :MaxIter, 200);
-    verbose       = get(param_levelsetmethod, :levelsetmethod_verbose, true);
+    verbose       = get(
+        param_levelsetmethod,
+        :verbose,
+        get(param_levelsetmethod, :levelsetmethod_verbose, true),
+    );
 
     return LevelSetMethodOracleParam(
         μ, 
@@ -548,6 +552,20 @@ function LevelSetMethod_optimization!(
     paramOPF::ParamOPF = paramOPF, 
     param::NamedTuple = param, param_levelsetmethod::NamedTuple = param_levelsetmethod
 )    
+    if is_adaptive_level_cut(param.cutSelection)
+        return _uc_adaptive_level_method!(
+            model,
+            levelsetmethodOracleParam,
+            stateInfo,
+            CutGenerationInfo;
+            indexSets = indexSets,
+            paramDemand = paramDemand,
+            paramOPF = paramOPF,
+            param = param,
+            param_levelsetmethod = param_levelsetmethod,
+        )
+    end
+
     ## ==================================================== Level-set Method ============================================== ##    
     (D, G, L, B) = (indexSets.D, indexSets.G, indexSets.L, indexSets.B);
     iter = 1;

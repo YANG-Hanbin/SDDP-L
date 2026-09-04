@@ -13,7 +13,8 @@ The implementation contains three algorithmic frameworks:
 It supports Lagrangian (`LC`), Pareto Lagrangian (`PLC`), square-minimization
 (`SMC`), linear-normalization (`LNC`), strengthened Benders (`SBC`), ReLU
 (`ReLUC`), and normalized ReLU (`NormalizedReLUC`) cuts. ReLU-based cuts are
-implemented for `SDDP` and `SDDP-L`.
+implemented for `SDDP` and `SDDP-L`. Adaptive-level variants of the PLC and
+SMC cut-generation problems are available as `AdaptivePLC` and `AdaptiveSMC`.
 
 ## Repository layout
 
@@ -66,11 +67,23 @@ julia +1.11 --project=. \
 
 Additional experiment drivers are available in each `test/` directory:
 
+- `adaptiveCutTest.jl` runs compact adaptive-level PLC/SMC regressions;
 - `cutTest.jl` compares cut families;
 - `corepointTest.jl` runs the core-point sensitivity study;
 - `partitionTest.jl` compares partition rules;
 - `sparsityTest.jl` compares sparse and dense cuts; and
 - `timeTest.jl` records runtime components.
+
+Run the adaptive-level regressions for the two applications with:
+
+```bash
+julia +1.11 --project=. src/GenerationExpansion/test/adaptiveCutTest.jl
+julia +1.11 --project=. \
+  src/multistage_stochastic_unit_commitment/test/adaptiveCutTest.jl
+```
+
+Both regression drivers use two SDDP-L iterations and disable result-file
+output by default.
 
 The normalized-ReLU batch for both applications can be launched with:
 
